@@ -1,0 +1,67 @@
+{
+  "Archaebacteria": {
+    "played_but_not_drawn_ids": [
+      "683863578"
+    ]
+  },
+  "Asteroid": {
+    "played_but_not_drawn_ids": [
+      "672565373"
+    ]
+  },
+  "Electro Catapult": {
+    "moves_card_seen_more_than_once": {
+      "681495762": [
+        {
+          "description": "SuperPikasso draws Electro Catapult, Soil Factory, Soletta, Solar Power | Fltr passes | Fltr gains 67 | SuperPikasso gains 77 | Fltr gains 4 | Fltr gains 2 | SuperPikasso gains 8 | Fltr gains 9 | SuperPikasso gains 7 | Fltr gains 1  due to heat transfer | Fltr pays 1 | SuperPikasso gains 1  due to heat transfer | SuperPikasso pays 1 | SuperPikasso gains 7 | Fltr gains 3 | SuperPikasso is starting player for this generation | New generation 12 | Research draft | Fltr draws 4 cards | SuperPikasso draws 4 cards",
+          "generation": 12,
+          "move_number": 509,
+          "action_type": "pass",
+          "move_type": "research_draft_not_drafted"
+        },
+        {
+          "description": "SuperPikasso draws Electro Catapult | SuperPikasso draws 1 cards",
+          "generation": 12,
+          "move_number": 534,
+          "action_type": "other",
+          "move_type": "inventors_guild_draw"
+        }
+      ]
+    }
+  },
+  "Power Supply Consortium": {
+    "played_but_not_drawn_ids": [
+      "670856867"
+    ]
+  },
+  "Solar Wind Power": {
+    "played_but_not_drawn_ids": [
+      "691716708"
+    ]
+  },
+  "Soletta": {
+    "multiple_draws_games": {
+      "670747244": [
+        {
+          "description": "akaiden draws Soletta | akaiden draws 1 cards",
+          "generation": 13,
+          "move_number": 713,
+          "action_type": "other",
+          "move_type": "draw_olympus_conference"
+        },
+        {
+          "description": "akaiden draws Soletta | akaiden draws 1 cards | akaiden reshuffles project card deck",
+          "generation": 13,
+          "move_number": 732,
+          "action_type": "other",
+          "move_type": "draw_mars_university"
+        }
+      ]
+    }
+  },
+  "Viral Enhancers": {
+    "played_but_not_drawn_ids": [
+      "499845703"
+    ]
+  }
+}

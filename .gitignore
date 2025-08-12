@@ -1,0 +1,28 @@
+# Configuration file with local paths
+config.py
+
+# Cache and output files
+analysis_output/
+*.pkl
+*.txt
+
+# Google credentials (contains sensitive data)
+*credentials*.json
+*service-account*.json
+*infra-memento*.json
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
