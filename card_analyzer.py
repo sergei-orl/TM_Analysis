@@ -26,6 +26,23 @@ BUY_METHODS = [
     "draw_business_network_buy", "draw_inventors_guild_buy", "draw_draft_buy"
 ]
 
+CARD_CONFUSION_PATTERNS = {
+    "Algae": ["Arctic Algae"],
+    "Moss": ["Nitrophilic Moss"],
+    "Mine": ["Strip Mine", "Titanium Mine"],
+    "Comet": ["Towing a Comet"],
+    "Lichen": ["Adapted Lichen"],
+    "Asteroid": ["Asteroid Mining", "Ammonia Asteroid", "Big Asteroid", "Thorium Asteroid","Ice Asteroid", 
+                    "pays 14 (Asteroid)", "Rich Asteroid", "standard project Asteroid", "Huge Asteroid"],
+    "Asteroid Mining": ["Asteroid Mining Consortium"],
+    "Ice Asteroid": ["Giant Ice Asteroid"],
+    "Farming": ["Kelp Farming", "Noctis Farming", "Tundra Farming", "Dome Farming"],
+    "Research": ["Research Coordination", "Research Outpost", "Research draft", "Research Network"],
+    "Research Outpost": ["Io Research Outpost"],
+    "Shuttles": ["Immigration Shuttles"]
+}
+        
+
 class CardAnalyzer:
     """
     Dedicated analyzer for card-specific analysis functionality.
@@ -78,8 +95,10 @@ class CardAnalyzer:
             'draft_takeback_context': {}, # Track context for draft moves with takebacks
             'draft_no_takebacks_context': {}, # Track context for draft moves without takebacks
             'draw_context': {},  # Track context for "draw" moves
+            'draw_draft_buy_context': {},  # Track context for draw_draft_buy moves
             'other_context': {},  # Track context for "other" moves
             'game_moves_by_card': {},  # Store all moves that contain the card name
+            'draw_draft_buy_without_draft_ids': [],  # Track replay IDs where draw_draft_buy occurs without corresponding draft moves
             # Player performance analysis
             'win_count': 0,  # Number of games won by player_perspective
             'elo_gains': {
@@ -299,7 +318,34 @@ class CardAnalyzer:
         # No "You choose corporation" found, keep original
         return original_player_perspective, False
     
-    def _check_wrong_card_attribution(self, card_name: str, current_description: str, player_names: list) -> bool:
+    def _strip_confusing_patterns(self, description: str, card_name: str) -> str:
+        """
+        Strip confusing card patterns from a description to avoid false positives.
+        
+        Args:
+            description: Description to clean
+            card_name: Name of the card being analyzed
+            
+        Returns:
+            Cleaned description with confusing patterns removed
+        """
+        if not description or card_name not in CARD_CONFUSION_PATTERNS:
+            return description
+            
+        cleaned_description = description
+        conflicting_cards = CARD_CONFUSION_PATTERNS[card_name]
+        
+        # Remove all conflicting card names from the description
+        for conflicting_card in conflicting_cards:
+            cleaned_description = cleaned_description.replace(conflicting_card, "")
+        
+        # Special handling for Mine card - also exclude any "Mine" followed by a letter
+        if card_name == "Mine":
+            cleaned_description = re.sub(r'Mine[a-z]', '', cleaned_description)
+            
+        return cleaned_description
+
+    def _check_wrong_card_attribution(self, card_name: str, current_description: str, player_perspective_name: str, opponent_name: str) -> bool:
         """
         Check if a move represents wrong card attribution (e.g., "Algae" vs "Arctic Algae").
         Also checks for player names that might contain the card name.
@@ -307,47 +353,19 @@ class CardAnalyzer:
         Args:
             card_name: Name of the card to check
             current_description: Current move description
-            player_names: List of player names in the game
+            player_perspective_name: Name of the player perspective
+            opponent_name: Name of the opponent player
             
         Returns:
             True if this move should be skipped due to wrong attribution
         """
-        # Check for specific card name confusion cases
-        # Define patterns for cards that can be confused with similar names
-        card_confusion_patterns = {
-            "Algae": ["Arctic Algae"],
-            "Moss": ["Nitrophilic Moss"],
-            "Mine": ["Strip Mine", "Titanium Mine"],
-            "Comet": ["Towing a Comet"],
-            "Lichen": ["Adapted Lichen"],
-            "Asteroid": ["Asteroid Mining", "Ammonia Asteroid", "Big Asteroid", "Thorium Asteroid","Ice Asteroid", 
-                         "pays 14 (Asteroid)", "Rich Asteroid", "standard project Asteroid", "Huge Asteroid"],
-            "Asteroid Mining": ["Asteroid Mining Consortium"],
-            "Ice Asteroid": ["Giant Ice Asteroid"],
-            "Farming": ["Kelp Farming", "Noctis Farming", "Tundra Farming", "Dome Farming"],
-            "Research": ["Research Coordination", "Research Outpost", "Research draft", "Research Network"],
-            "Research Outpost": ["Io Research Outpost"],
-            "Shuttles": ["Immigration Shuttles"]
-        }
-        
-        # Start with the original description
-        description_to_check = current_description
-        
-        # Apply card confusion patterns first
-        if card_name in card_confusion_patterns:
-            conflicting_cards = card_confusion_patterns[card_name]
-            
-            # Remove all conflicting card names from the description
-            for conflicting_card in conflicting_cards:
-                description_to_check = description_to_check.replace(conflicting_card, "")
-            
-            # Special handling for Mine card - also exclude any "Mine" followed by a letter
-            if card_name == "Mine":
-                description_to_check = re.sub(r'Mine[a-z]', '', description_to_check)
+
+        # Start with the original description and apply card confusion patterns
+        description_to_check = self._strip_confusing_patterns(current_description, card_name)
         
         # Apply player name filtering
-        for player_name in player_names:
-            if card_name in player_name:
+        for player_name in [player_perspective_name, opponent_name]:
+            if player_name and card_name in player_name:
                 # Player name contains the card name, exclude it entirely from the description
                 if player_name in description_to_check:
                     # Remove the player name from the description to avoid false positives
@@ -361,7 +379,8 @@ class CardAnalyzer:
 
     def _detect_draw_move(self, card_name: str, descriptions: list, action_types: list,
                           next_description: str, next_2_description: str, next_player_id: str = None,
-                          player_perspective: str = None, player_names: list = None, generation: int = None) -> str:
+                          player_perspective: str = None, player_perspective_name: str = None, 
+                          opponent_name: str = None, generation: int = None) -> str:
         """
         Detect if a move represents a draw and determine the draw type.
         
@@ -372,7 +391,9 @@ class CardAnalyzer:
             next_description: Next move description
             next_player_id: Player ID of the next move
             player_perspective: Player ID to focus on
-            player_names: List of player names in the game for wrong attribution checking
+            player_perspective_name: Name of the player perspective
+            opponent_name: Name of the opponent player
+            generation: Generation number
             
         Returns:
             The move type string
@@ -383,7 +404,7 @@ class CardAnalyzer:
         
         # Check for wrong card attribution
         # Only check for specific cases to avoid unnecessary regex for other cards
-        if player_names and self._check_wrong_card_attribution(card_name, current_description, player_names):
+        if player_perspective_name and opponent_name and self._check_wrong_card_attribution(card_name, current_description, player_perspective_name, opponent_name):
             return "skip_wrong_attribution"
         
         if re.search(fr"plays card {card_name}", prev_description) or re.search(fr"plays card {card_name}", current_description):
@@ -453,7 +474,7 @@ class CardAnalyzer:
         
         # Draft cards
         if current_action_type == "draft_card":
-            if "takes back their move" in next_description:
+            if f"{player_perspective_name} takes back their move" in next_description:
                 if next_player_id == player_perspective or not next_player_id:
                     return "other"
                 else:
@@ -470,7 +491,7 @@ class CardAnalyzer:
         # Starting hand selection
         if "You choose corporation" in current_description and f"You buy {card_name}" in current_description:
             # Check that the next move is from the same player (player_perspective)
-            if "takes back their move" in next_description:
+            if f"{player_perspective_name} takes back their move" in next_description:
                 if next_player_id == player_perspective or not next_player_id:
                     return "other"
                 else:
@@ -481,8 +502,15 @@ class CardAnalyzer:
                 return "draw_start"
         
         # Reveals (card shown but not drawn)
-        if f"reveals {card_name}:" in current_description:
-            return "reveal"
+        if f"reveals {card_name}:" in current_description or f"reveals {card_name} |" in current_description:
+            if "it does not have a Microbe tag" in current_description or "it has a Microbe tag" in current_description:
+                return "reveal_microbe"
+            elif "it does not have a Plant tag" in current_description:
+                return "reveal_plant"
+            elif "it does not have a Space tag" in current_description:
+                return "reveal_space"
+            else:
+                return "reveal"
         
         if ("draws 3 cards" in current_description and self._check_pattern_in_descriptions("plays card Research Network", descriptions) and
             not ("You keep" in next_description)):
@@ -638,7 +666,7 @@ class CardAnalyzer:
             if pays_and_keeps or pays_fixed_amount or "draft_card" in action_types:
                 if f"You buy {card_name}" in next_2_description:
                     return "other"
-                elif "takes back their move" in next_description:
+                elif f"{player_perspective_name} takes back their move" in next_description:
                     if next_player_id == player_perspective or not next_player_id:
                         return "other"
                     else:
@@ -648,7 +676,7 @@ class CardAnalyzer:
         
         # Regular draws (buy, draw, keep)
         if ("buy" in current_description or "draw" in current_description or "keep" in current_description):
-            if "draws 10 cards" in current_description or "takes back their move" in next_description:
+            if "draws 10 cards" in current_description or f"{player_perspective_name} takes back their move" in next_description:
                 return "other"
             elif "buy" in current_description:
                 return "draw_draft_buy"
@@ -657,7 +685,7 @@ class CardAnalyzer:
         
         return "other"
     
-    def _determine_draft_type(self, moves: list, current_move_index: int, player_perspective: str, card_name: str) -> dict:
+    def _determine_draft_type(self, moves: list, current_move_index: int, player_perspective: str, card_name: str, player_perspective_name: str, opponent_name: str) -> dict:
         """
         Determine the draft type (draft_1, draft_2, draft_3, or draft_4) and track takeback information.
         
@@ -666,6 +694,8 @@ class CardAnalyzer:
             current_move_index: Index of the current draft move
             player_perspective: Player ID to focus on
             card_name: Name of the card being analyzed
+            player_perspective_name: Name of the player perspective
+            opponent_name: Name of the opponent player
             
         Returns:
             Dictionary with draft_type, has_takeback flag, and incorrect_draft if applicable
@@ -684,7 +714,7 @@ class CardAnalyzer:
         # Check if pass move contains the card name
         pass_move = moves[pass_move_index]
         pass_description = pass_move.get('description', '')
-        pass_contains_card = card_name in pass_description
+        pass_contains_card = not self._check_wrong_card_attribution(card_name, pass_description, player_perspective_name, opponent_name)
         
         # Analyze moves between pass and current draft
         draft_card_count = 0
@@ -801,13 +831,14 @@ class CardAnalyzer:
                 move_type == "draw" or
                 move_type == "draw_prelude" or
                 move_type == "draw_placement" or 
+                move_type == "draw_draft_buy" or
                 additional_draw_decider or 
                 move_type == "other"):
             return
             
         current_move = moves[current_index]
         
-        # Get previous 6 moves for context
+        # Get previous moves for context
         prev_3_move = moves[current_index-3] if current_index > 2 else None
         prev_4_move = moves[current_index-4] if current_index > 3 else None
         
@@ -864,7 +895,11 @@ class CardAnalyzer:
                 if replay_id not in card_stats['draft_no_takebacks_context']:
                     card_stats['draft_no_takebacks_context'][replay_id] = []
                 card_stats['draft_no_takebacks_context'][replay_id].append(context_data)
-        elif move_type.startswith("draw") or move_type == "draw_placement" or additional_draw_decider:
+        elif move_type == "draw_draft_buy":
+            if replay_id not in card_stats['draw_draft_buy_context']:
+                card_stats['draw_draft_buy_context'][replay_id] = []
+            card_stats['draw_draft_buy_context'][replay_id].append(context_data)
+        elif move_type == "draw" or move_type == "draw_placement" or move_type == "draw_prelude" or additional_draw_decider:
             if replay_id not in card_stats['draw_context']:
                 card_stats['draw_context'][replay_id] = []
             card_stats['draw_context'][replay_id].append(context_data)
@@ -1251,11 +1286,13 @@ class CardAnalyzer:
             'draft_takeback_context': card_stats['draft_takeback_context'], 
             'draft_no_takebacks_context': card_stats['draft_no_takebacks_context'],
             'draw_context': card_stats['draw_context'], 
+            'draw_draft_buy_context': card_stats['draw_draft_buy_context'],
             'other_context': card_stats['other_context'],
             'game_moves_by_card': card_stats['game_moves_by_card'],
+            'draw_draft_buy_without_draft_ids': card_stats['draw_draft_buy_without_draft_ids'],
             # 'wrong_player_perspective_summary': card_stats.get('wrong_player_perspective_summary', {}),
             # 'duplicated_games_summary': card_stats.get('duplicated_games_summary', {}),
-            # 'incorrect_elo_summary': card_stats.get('incorrect_elo_summary', {}),
+            'incorrect_elo_summary': card_stats.get('incorrect_elo_summary', {}),
         }
         
         return reordered_stats
@@ -1428,20 +1465,20 @@ class CardAnalyzer:
             play_count = 0
             
             # Collect all player names in this game to check for wrong card attribution
-            player_names = set()
+            player_names = {}  # player_id: player_name mapping
             players = game.get('players', {})
             player_perspective_name = ""
-            oponnent_name = ""
+            opponent_name = ""
             for player_id, player_data in players.items():
                 if isinstance(player_data, dict):
                     player_name = player_data.get('player_name', '')
                     if player_name:
-                        player_names.add(player_name)
+                        player_names[player_id] = player_name
                         # Get the name for player_perspective
                         if player_id == player_perspective:
                             player_perspective_name = player_name
                         else:
-                            oponnent_name = player_name
+                            opponent_name = player_name
             
             # Step 2: Find all draws and plays (count each game only once)
             for i, move in enumerate(moves):
@@ -1449,16 +1486,14 @@ class CardAnalyzer:
                     continue
                     
                 description = move.get('description', '')
-                # Only consider moves from player_perspective, except for pass moves which can contain card info
-                if (
-                    move.get('player_id') != player_perspective
-                    and move.get('action_type') != 'pass'
-                    and not any(
-                        f"{player_perspective_name} {verb} {card_name}" in description
-                        for verb in ("draws", "plays", "keeps")
-                    )
-                ):
-                    continue
+                if move.get('player_id') != player_perspective and move.get('action_type') != 'pass':
+                    # Skip if description does not involve our player
+                    player_actions = (f"{player_perspective_name} {verb} {card_name}"
+                                    for verb in ("draws", "plays", "keeps"))
+                    
+                    if not any(action in description for action in player_actions):
+                        if not "You " in description:
+                            continue
                 
                 action_type = move.get('action_type', '')
                 card_played = move.get('card_played', '')
@@ -1486,6 +1521,10 @@ class CardAnalyzer:
                 next_2_description = next_2_move.get('description', '') if next_2_move else ''
                 next_player_id = next_move.get('player_id') if next_move else None
 
+                # Clean descriptions of confusing card patterns
+                next_description = self._strip_confusing_patterns(next_description, card_name)
+                next_2_description = self._strip_confusing_patterns(next_2_description, card_name)
+
                 descriptions = [
                     description,
                     prev_description if prev_description else "",
@@ -1500,7 +1539,8 @@ class CardAnalyzer:
                 # Use the new method to detect and determine the draw type
                 move_type = self._detect_draw_move(
                     card_name, descriptions, action_types, 
-                    next_description, next_2_description, next_player_id, player_perspective, player_names, generation
+                    next_description, next_2_description, next_player_id, player_perspective, 
+                    player_perspective_name, opponent_name, generation
                 )
 
                 # If the method returned "skip_wrong_attribution", skip this move
@@ -1518,9 +1558,9 @@ class CardAnalyzer:
                     descriptions = descriptions + [prev_3_description, prev_4_description]
                     action_types = action_types + [prev_3_action_type, prev_4_action_type]
                     move_type = self._detect_draw_move(
-                    card_name, 
-                    descriptions, action_types, 
-                    next_description, next_player_id, player_perspective, player_names
+                    card_name, descriptions, action_types, 
+                    next_description, next_2_description, next_player_id, player_perspective, 
+                    player_perspective_name, opponent_name, generation
                     )
                     if move_type == "draw" or move_type == "draw_placement":
                         prev_5_description = moves[i-5].get('description', '') if i > 4 else ''
@@ -1530,9 +1570,9 @@ class CardAnalyzer:
                         descriptions = descriptions + [prev_5_description, prev_6_description]
                         action_types = action_types + [prev_5_action_type, prev_6_action_type]
                         move_type = self._detect_draw_move(
-                        card_name, 
-                        descriptions, action_types, 
-                        next_description, next_player_id, player_perspective, player_names
+                        card_name, descriptions, action_types, 
+                        next_description, next_2_description, next_player_id, player_perspective, 
+                        player_perspective_name, opponent_name, generation
                         )
                         if move_type == "draw" or move_type == "draw_placement":
                             prev_7_description = moves[i-7].get('description', '') if i > 6 else ''
@@ -1544,15 +1584,15 @@ class CardAnalyzer:
                             descriptions = descriptions + [prev_7_description, prev_8_description, prev_9_description]
                             action_types = action_types + [prev_7_action_type, prev_8_action_type, prev_9_action_type]
                             move_type = self._detect_draw_move(
-                            card_name, 
-                            descriptions, action_types, 
-                            next_description, next_player_id, player_perspective, player_names
+                            card_name, descriptions, action_types, 
+                            next_description, next_2_description, next_player_id, player_perspective, 
+                            player_perspective_name, opponent_name, generation
                             )
                     # Mark this as a draw move that needed additional context
                     additional_draw_decider = True
 
                 if move_type == "draft":
-                    draft_info = self._determine_draft_type(moves, i, player_perspective, card_name)
+                    draft_info = self._determine_draft_type(moves, i, player_perspective, card_name, player_perspective_name, opponent_name)
                     move_type = draft_info["draft_type"]
                     has_takeback = draft_info.get("has_takeback", False)
                     incorrect_draft = draft_info.get("incorrect_draft")
@@ -1583,7 +1623,7 @@ class CardAnalyzer:
                 # Check for plays (count each game only once)
                 paid_amount = None
                 if (not played_in_game and action_type == 'play_card' and (card_played == card_name or card_played == "Eccentric Sponsor")
-                    and not "undoes" in next_description and not f"{oponnent_name} plays card {card_name}" in description):
+                    and not "undoes" in next_description and not f"{opponent_name} plays card {card_name}" in description):
                     played_in_game = True
                     played_generation = generation
                     move_type = "play"
@@ -1594,7 +1634,7 @@ class CardAnalyzer:
                 
                 # Other
                 if move_type == "other":
-                    move_type = self._classify_other_move_type(description, action_type, next_description, next_2_description, card_name, oponnent_name)
+                    move_type = self._classify_other_move_type(description, action_type, next_description, next_2_description, card_name, opponent_name)
                     card_stats['other_stats'][move_type] += 1
                 
                 # Track context for specific move types
@@ -1632,87 +1672,13 @@ class CardAnalyzer:
                 card_stats['kept_but_not_played'] += 1
             
             # After processing all moves in the game, classify research_draft moves
-            if 'research_draft' in card_stats['seen_methods'] and card_stats['seen_methods']['research_draft'] > 0:
-                # Check if this game has draft_1 or draft_3 moves
-                has_draft_1_or_3 = any(
-                    move['move_type'] in ['draft_1', 'draft_3'] 
-                    for move in game_moves
-                )
-                
-                if has_draft_1_or_3:
-                    # This game has both research_draft and draft_1/draft_3
-                    # Convert research_draft to research_draft_drafted
-                    card_stats['seen_methods']['research_draft'] -= 1
-                    card_stats['seen_methods']['research_draft_drafted'] = card_stats['seen_methods'].get('research_draft_drafted', 0) + 1
-                    
-                    # Update move_type in game_moves from 'research_draft' to 'research_draft_drafted'
-                    for move in game_moves:
-                        if move['move_type'] == 'research_draft':
-                            move['move_type'] = 'research_draft_drafted'
-                    
-                else:
-                    # This game has research_draft but no draft_1/draft_3
-                    # Convert research_draft to research_draft_not_drafted
-                    card_stats['seen_methods']['research_draft'] -= 1
-                    card_stats['seen_methods']['research_draft_not_drafted'] = card_stats['seen_methods'].get('research_draft_not_drafted', 0) + 1
-                    
-                    # Update move_type in game_moves from 'research_draft' to 'research_draft_not_drafted'
-                    for move in game_moves:
-                        if move['move_type'] == 'research_draft':
-                            move['move_type'] = 'research_draft_not_drafted'
-                    
-                # Remove research_draft entry if count reaches 0
-                if card_stats['seen_methods']['research_draft'] == 0:
-                    del card_stats['seen_methods']['research_draft']
+            self._post_process_research_draft_moves(card_stats, game_moves)
 
             # After processing all moves in the game, analyze draft-to-buy relationships
-            if game_draft_sequence and game_buy_moves:
-                # For each draft move, find if there's a subsequent buy move
-                for draft_move in game_draft_sequence:
-                    draft_type = draft_move['draft_type']
-                    draft_move_number = draft_move['move_number']
-                    
-                    # Look for buy moves that come after this draft move
-                    for buy_move in game_buy_moves:
-                        if buy_move['move_number'] > draft_move_number:
-                            # This buy came after the draft
-                            if draft_type == 'draft_1':
-                                card_stats['draft_1_buys'] += 1
-                            elif draft_type == 'draft_2':
-                                card_stats['draft_2_buys'] += 1
-                            elif draft_type == 'draft_3':
-                                card_stats['draft_3_buys'] += 1
-                            elif draft_type == 'draft_4':
-                                card_stats['draft_4_buys'] += 1
-                            break  # Only count the first buy after this draft
+            self._analyze_draft_to_buy_relationships(card_stats, game_draft_sequence, game_buy_moves, replay_id)
                         
             # Check for 2 draft moves close together (< 30 moves apart)
-            current_game_draft_moves = [move for move in game_moves if move.get('move_type', '').startswith('draft')]
-            if len(current_game_draft_moves) == 2:
-                print(f"WARNING: Found 2 draft moves in game {replay_id}!")
-                move_numbers = [move.get('move_number', 0) for move in current_game_draft_moves]
-                distance = abs(move_numbers[1] - move_numbers[0])
-                
-                if distance < 30:
-                    # Find the earlier draft move
-                    earlier_move_index = 0 if move_numbers[0] < move_numbers[1] else 1
-                    earlier_move = current_game_draft_moves[earlier_move_index]
-                    
-                    # Change the earlier move type to other_takeback_draft in game_moves
-                    for game_move in game_moves:
-                        if (game_move['move_number'] == earlier_move.get('move_number') and 
-                            game_move['move_type'].startswith('draft')):
-                            game_move['move_type'] = 'other_takeback_draft'
-                            print(f"Setting other_takeback_draft for move {game_move.get('move_number', 0)} in game {replay_id}!")
-                            break
-                    
-                    # Update the stats
-                    card_stats['other_stats']['other_takeback_draft'] += 1
-                    
-                    # Remove the original draft count from seen_methods
-                    original_draft_type = current_game_draft_moves[earlier_move_index].get('move_type', '')
-                    if original_draft_type in card_stats['seen_methods']:
-                        card_stats['seen_methods'][original_draft_type] -= 1
+            self._handle_close_draft_moves(card_stats, game_moves, replay_id)
             
             # Check for multiple seen_method moves in this game
             # Count actual moves that are seen methods within the current game
@@ -1745,12 +1711,13 @@ class CardAnalyzer:
                     card_stats['draw_for_2'][last_draw_generation] += 1
             
             # Count games where card appeared in any way
-            if game_moves:  # If we found any moves with this card
+            if any(not move['move_type'].startswith('other') for move in game_moves):  # Check for actual moves with this card
                 card_stats['total_games_with_card'] += 1
                 card_stats['game_moves_by_card'][replay_id] = game_moves
                 
                 # Track different game types for win percentage calculations
-                game_with_card_besides_reveal = any(((move['move_type'] in card_stats['seen_methods'] and move['move_type'] != 'reveal') or
+                game_with_card_besides_reveal = any(((move['move_type'] in card_stats['seen_methods'] and
+                                                    not move['move_type'].startswith('reveal')) or
                                           move['move_type'] in card_stats['draw_methods'])
                                           for move in game_moves)
                 game_has_any_draw_move = any(move['move_type'] in card_stats['draw_methods'] for move in game_moves)
@@ -1825,6 +1792,7 @@ class CardAnalyzer:
             'draft_takeback_context': card_stats.pop('draft_takeback_context', {}),
             'draft_no_takebacks_context': card_stats.pop('draft_no_takebacks_context', {}),
             'draw_context': card_stats.pop('draw_context', {}),
+            'draw_draft_buy_context': card_stats.pop('draw_draft_buy_context', {}),
             'other_context': card_stats.pop('other_context', {})
         }
         
@@ -1860,7 +1828,119 @@ class CardAnalyzer:
         else:
             print(f"No context data found for card: {card_name}")
         
-        return card_stats 
+        return card_stats
+
+    def _post_process_research_draft_moves(self, card_stats: Dict[str, Any], game_moves: list) -> None:
+        """
+        Post-process research_draft moves to classify them as drafted or not drafted.
+        
+        Args:
+            card_stats: Card statistics dictionary to update
+            game_moves: List of moves for the current game
+        """
+        if 'research_draft' in card_stats['seen_methods'] and card_stats['seen_methods']['research_draft'] > 0:
+            # Check if this game has draft_1 or draft_3 moves
+            has_draft_1_or_3 = any(
+                move['move_type'] in ['draft_1', 'draft_3'] 
+                for move in game_moves
+            )
+            
+            if has_draft_1_or_3:
+                # This game has both research_draft and draft_1/draft_3
+                # Convert research_draft to research_draft_drafted
+                card_stats['seen_methods']['research_draft'] -= 1
+                card_stats['seen_methods']['research_draft_drafted'] = card_stats['seen_methods'].get('research_draft_drafted', 0) + 1
+                
+                # Update move_type in game_moves from 'research_draft' to 'research_draft_drafted'
+                for move in game_moves:
+                    if move['move_type'] == 'research_draft':
+                        move['move_type'] = 'research_draft_drafted'
+                
+            else:
+                # This game has research_draft but no draft_1/draft_3
+                # Convert research_draft to research_draft_not_drafted
+                card_stats['seen_methods']['research_draft'] -= 1
+                card_stats['seen_methods']['research_draft_not_drafted'] = card_stats['seen_methods'].get('research_draft_not_drafted', 0) + 1
+                
+                # Update move_type in game_moves from 'research_draft' to 'research_draft_not_drafted'
+                for move in game_moves:
+                    if move['move_type'] == 'research_draft':
+                        move['move_type'] = 'research_draft_not_drafted'
+                
+            # Remove research_draft entry if count reaches 0
+            if card_stats['seen_methods']['research_draft'] == 0:
+                del card_stats['seen_methods']['research_draft']
+
+    def _analyze_draft_to_buy_relationships(self, card_stats: Dict[str, Any], game_draft_sequence: list, game_buy_moves: list, replay_id: str) -> None:
+        """
+        Analyze relationships between draft moves and subsequent buy moves.
+        
+        Args:
+            card_stats: Card statistics dictionary to update
+            game_draft_sequence: List of draft moves in the current game
+            game_buy_moves: List of buy moves in the current game
+            replay_id: ID of the current replay
+        """
+        # Check for cases where there are draw_draft_buy moves but no corresponding draft moves
+        if game_buy_moves and not game_draft_sequence:
+            card_stats['draw_draft_buy_without_draft_ids'].append(replay_id)
+            print(f"WARNING: Found draw_draft_buy moves without corresponding draft moves in replay {replay_id}")
+        
+        if game_draft_sequence and game_buy_moves:
+            # For each draft move, find if there's a subsequent buy move
+            for draft_move in game_draft_sequence:
+                draft_type = draft_move['draft_type']
+                draft_move_number = draft_move['move_number']
+                
+                # Look for buy moves that come after this draft move
+                for buy_move in game_buy_moves:
+                    if buy_move['move_number'] > draft_move_number:
+                        # This buy came after the draft
+                        if draft_type == 'draft_1':
+                            card_stats['draft_1_buys'] += 1
+                        elif draft_type == 'draft_2':
+                            card_stats['draft_2_buys'] += 1
+                        elif draft_type == 'draft_3':
+                            card_stats['draft_3_buys'] += 1
+                        elif draft_type == 'draft_4':
+                            card_stats['draft_4_buys'] += 1
+                        break  # Only count the first buy after this draft
+
+    def _handle_close_draft_moves(self, card_stats: Dict[str, Any], game_moves: list, replay_id: str) -> None:
+        """
+        Handle cases where there are 2 draft moves close together (< 30 moves apart).
+        
+        Args:
+            card_stats: Card statistics dictionary to update
+            game_moves: List of moves for the current game
+            replay_id: ID of the current replay
+        """
+        current_game_draft_moves = [move for move in game_moves if move.get('move_type', '').startswith('draft')]
+        if len(current_game_draft_moves) == 2:
+            print(f"WARNING: Found 2 draft moves in game {replay_id}!")
+            move_numbers = [move.get('move_number', 0) for move in current_game_draft_moves]
+            distance = abs(move_numbers[1] - move_numbers[0])
+            
+            if distance < 30:
+                # Find the earlier draft move
+                earlier_move_index = 0 if move_numbers[0] < move_numbers[1] else 1
+                earlier_move = current_game_draft_moves[earlier_move_index]
+                
+                # Change the earlier move type to other_takeback_draft in game_moves
+                for game_move in game_moves:
+                    if (game_move['move_number'] == earlier_move.get('move_number') and 
+                        game_move['move_type'].startswith('draft')):
+                        game_move['move_type'] = 'other_takeback_draft'
+                        print(f"Setting other_takeback_draft for move {game_move.get('move_number', 0)} in game {replay_id}!")
+                        break
+                
+                # Update the stats
+                card_stats['other_stats']['other_takeback_draft'] += 1
+                
+                # Remove the original draft count from seen_methods
+                original_draft_type = current_game_draft_moves[earlier_move_index].get('move_type', '')
+                if original_draft_type in card_stats['seen_methods']:
+                    card_stats['seen_methods'][original_draft_type] -= 1
 
     def _process_play_payment(self, description: str, card_stats: Dict[str, Any]) -> int:
         """
@@ -1899,36 +1979,47 @@ class CardAnalyzer:
         """
         if f"immediate effect of {card_name}" in description:
             return "other_immediate_effect"
-        elif "triggered effect of" in description:
+        elif f"triggered effect of {card_name}" in description:
             return "other_triggered_effect"
-        elif "activation effect of" in description:
-            return "other_activation_effect"
         elif f"activates {card_name}" in description:
             return "other_activate"
+        elif f"activation effect of {card_name}" in description:
+            return "other_activation_effect"
         elif f"places {card_name}" in description or f"places tile {card_name}" in description:
             return "other_place_card"
         elif f"places City on {card_name}" in description or f"places tile City into {card_name}" in description:
             return "other_place_city"
         elif f"copies production box of {card_name}" in description:
             return "other_copy_production_box"
-        elif f"adds Microbe to {card_name}" in description:
-            return "other_add_microbe"
-        elif f"adds Animal to {card_name}" in description:
-            return "other_add_animal"
         elif f"removes Microbe from {card_name}" in description:
             return "other_remove_microbe"
         elif f"removes Animal from {card_name}" in description:
             return "other_remove_animal"
+        elif f"adds Microbe to {card_name}" in description:
+            return "other_add_microbe"
+        elif f"adds Animal to {card_name}" in description:
+            return "other_add_animal"
         elif f"moves Resource into {card_name}" in description:
             return "other_move_resource"
         elif f"{oponnent_name} plays card {card_name}" in description:
             return "other_opponent_play"
+        elif "(Lava Flows)" in description and action_type == "place_tile" and card_name == "Lava Flows":
+            return "other_place_lava_and_ocean"
+        elif any(
+            f"({name})" in description and card_name == name
+            for name in ["Lava Flows", "Capital", "Ecological Zone", "Restricted Area", "Nuclear Zone", "Natural Preserve", "Mohole Area", "Industrial Center", "Commercial District"]
+        ):
+            return "other_place_gain"
         elif "scores" in description:
             return "other_scoring"
-        elif "adds Science to" in description or "removes Science from" in description:
-            return "other_olympus_effect"
+        elif "adds Science to" in description:
+            return "other_add_science"
+        elif "removes Science from" in description:
+            return "other_remove_science"
         elif "undoes" in next_description:
-            return "other_takeback_buy"
+            return "other_takeback_undo"
+        elif "draws 10 cards" in description:
+            return "other_starting_hand"
         elif "takes back their move" in next_description or f"You buy {card_name}" in next_2_description:
             if "You choose corporation" in description:
                 return "other_takeback_start"
@@ -1942,17 +2033,5 @@ class CardAnalyzer:
             return "other_takeback_start"
         elif "You draft" in description:
             return "other_takeback_draft"
-        elif "draws 10 cards" in description:
-            return "other_starting_hand"
-        elif "(Lava Flows)" in description and action_type == "place_tile" and card_name == "Lava Flows":
-            return "other_place_lava_and_ocean"
-        elif "(Lava Flows)" in description and card_name == "Lava Flows":
-            return "other_place_lava_flows_gain"
-        elif "(Capital)" in description and card_name == "Capital":
-            return "other_place_capital_gain"
-        elif "(Ecological Zone)" in description and card_name == "Ecological Zone":
-            return "other_place_ecological_zone_gain"
-        elif "(Restricted Area)" in description and card_name == "Restricted Area":
-            return "other_place_restricted_area_gain"
         else:
             return "other"
