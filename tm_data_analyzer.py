@@ -147,6 +147,12 @@ class TerraformingMarsAnalyzer:
         
         # Try to load from cache first (only if no replay filter is set)
         if use_cache and not self.replay_id_filter and self._load_from_cache():
+            # Apply Prelude and Starting Hand filters to cached data
+            initial_count = len(self.games_data)
+            self._apply_additional_filters_to_cached_data()
+            final_count = len(self.games_data)
+            if initial_count != final_count:
+                print(f"Applied additional filters: {initial_count} → {final_count} games")
             return len(self.games_data)
         
         # If replay ID filter is set, search for specific file first
@@ -172,8 +178,8 @@ class TerraformingMarsAnalyzer:
                 with open(json_file, 'r', encoding='utf-8') as f:
                     game_data = json.load(f)
                     
-                    # Immediate filtering during loading
-                    if self._matches_criteria(game_data):
+                    # Immediate filtering during loading (excluding Prelude and Starting Hand)
+                    if self._matches_criteria_basic(game_data):
                         game_data['_file_path'] = str(json_file)
                         self.games_data.append(game_data)
                         filtered_games += 1
@@ -184,25 +190,68 @@ class TerraformingMarsAnalyzer:
                 print(f"\nError loading {json_file}: {e}")
         
         print(f"\nSuccessfully loaded {successful_loads} files")
-        print(f"Found {filtered_games} games matching criteria")
+        print(f"Found {filtered_games} games matching basic criteria")
         if failed_loads > 0:
             print(f"Failed to load {failed_loads} files")
+        
+        # Apply Prelude and Starting Hand filters to the loaded data
+        if filtered_games > 0:
+            initial_count = filtered_games
+            self._apply_additional_filters_to_cached_data()
+            final_count = len(self.games_data)
+            if initial_count != final_count:
+                print(f"Applied additional filters: {initial_count} → {final_count} games")
         
         # Save to cache for next run (only if no replay filter)
         if use_cache and filtered_games > 0 and not self.replay_id_filter:
             self._save_to_cache()
         
         return len(self.games_data)
-    
-    def _matches_criteria(self, game_data: Dict) -> bool:
+
+    def _apply_additional_filters_to_cached_data(self):
         """
-        Check if a game matches the specific criteria.
+        Apply Prelude and Starting Hand filters to already loaded games data.
+        This allows changing these filters without rebuilding the cache.
+        """
+        if not self.games_data:
+            return
+        
+        # Filter out games that don't match Prelude and Starting Hand criteria
+        filtered_games = []
+        
+        for game_data in self.games_data:
+            # Check prelude setting
+            if game_data.get('prelude_on', False) != PRELUDE_MUST_BE_ON:
+                continue
+            
+            # Check starting hand requirement
+            if MUST_INCLUDE_STARTING_HAND:
+                # Check if any player has starting_hand data
+                players = game_data.get('players', {})
+                has_starting_hand = False
+                for player_data in players.values():
+                    if isinstance(player_data, dict) and 'starting_hand' in player_data:
+                        has_starting_hand = True
+                        break
+                if not has_starting_hand:
+                    continue
+            
+            # Game passed all additional filters
+            filtered_games.append(game_data)
+        
+        # Update the games data
+        self.games_data = filtered_games
+
+    def _matches_criteria_basic(self, game_data: Dict) -> bool:
+        """
+        Check if a game matches the basic criteria (Tharsis map, 2 players, basic settings).
+        This is used during initial loading to create the cache.
         
         Args:
             game_data: Game data dictionary
             
         Returns:
-            True if game matches criteria, False otherwise
+            True if game matches basic criteria, False otherwise
         """
         # Check replay ID filter first (if set)
         if self.replay_id_filter:
@@ -220,7 +269,7 @@ class TerraformingMarsAnalyzer:
             return False
         if game_data.get('draft_on', False) != DRAFT_MUST_BE_ON:
             return False
-            
+        
         # Check number of players
         players = game_data.get('players', {})
         player_count = len([p for p in players.values() if isinstance(p, dict)])
@@ -263,7 +312,17 @@ def main():
     # Load all games (filtering happens during loading)
     print("Starting Terraforming Mars Data Analysis")
     print("=" * 50)
-    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players, Colonies={'OFF' if COLONIES_MUST_BE_OFF else 'ON'}, Corporate Era={'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}, Draft={'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
+    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players")
+    print(f"Colonies: {'OFF' if COLONIES_MUST_BE_OFF else 'ON'}")
+    print(f"Corporate Era: {'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}")
+    print(f"Draft: {'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
+    
+    # Display prelude filter if configured
+    print(f"Prelude: {'ON' if PRELUDE_MUST_BE_ON else 'OFF'}")
+    
+    # Display starting hand filter if configured
+    print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
+    
     if replay_id_filter:
         print(f"🔍 Additional filter: Replay ID = {replay_id_filter}")
     print(f"Analyzing card: '{card_name}'")

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, Any
 from tqdm import tqdm
 import re
+from config import MUST_INCLUDE_STARTING_HAND
 
 SKIPPED_GAMES = [
     "603866588",
@@ -144,8 +145,8 @@ class CardAnalyzer:
             'games_without_prelude': 0,  # Games where prelude_on = False
             'wins_with_prelude': 0,  # Wins when prelude_on = True
             'wins_without_prelude': 0,  # Wins when prelude_on = False
-            'win_percentage_with_prelude': 0,  # Win percentage when prelude_on = True
-            'win_percentage_without_prelude': 0,  # Win percentage when prelude_on = False
+            'win_rate_with_prelude': 0,  # Win percentage when prelude_on = True
+            'win_rate_without_prelude': 0,  # Win percentage when prelude_on = False
             # New buy rate tracking
             'card_buy_through_card_rate': 0,  # Rate of buys through Business Network/Inventors' Guild
             'buy_to_draft_rate': 0,  # Rate of buys vs drafts overall
@@ -165,7 +166,17 @@ class CardAnalyzer:
             # Track plays under each condition separately
             'plays_when_bought_during_game': 0,  # Plays in games where card was bought during game
             'plays_when_bought_overall': 0,  # Plays in games where card was bought (during game + starting hand)
-            'plays_when_drawn': 0  # Plays in games where card was drawn (excluding buy methods and starting hand)
+            'plays_when_drawn': 0,  # Plays in games where card was drawn (excluding buy methods and starting hand)
+            # Separate ELO tracking for each case - allows us to calculate average ELO gains and ratings
+            # for different scenarios (when card was seen, drawn, bought, played, and by prelude status)
+            'elo_values_when_seen': [],  # ELO values when card was seen
+            'elo_values_when_drawn': [],  # ELO values when card was drawn
+            'elo_values_when_bought_during_game': [],  # ELO values when card was bought during game
+            'elo_values_when_played': [],  # ELO values when card was played
+            'game_ranks_when_seen': [],  # ELO ratings at game start when card was seen
+            'game_ranks_when_drawn': [],  # ELO ratings at game start when card was drawn
+            'game_ranks_when_bought_during_game': [],  # ELO ratings at game start when card was bought during game
+            'game_ranks_when_played': [],  # ELO ratings at game start when card was played
         }
     
     def _get_elo_bucket(self, elo_value: int) -> str:
@@ -402,7 +413,6 @@ class CardAnalyzer:
         current_action_type = action_types[0]
         prev_description = descriptions[1]
         
-        # Check for wrong card attribution
         # Only check for specific cases to avoid unnecessary regex for other cards
         if player_perspective_name and opponent_name and self._check_wrong_card_attribution(card_name, current_description, player_perspective_name, opponent_name):
             return "skip_wrong_attribution"
@@ -920,7 +930,13 @@ class CardAnalyzer:
         """
         # Calculate kept play rate
         if card_stats['kept_in_starting_hand'] > 0:
-            card_stats['kept_play_rate'] = round(card_stats['kept_and_played'] / card_stats['kept_in_starting_hand'], 4)
+            card_stats['play_to_keep_rate'] = round(card_stats['kept_and_played'] / card_stats['kept_in_starting_hand'], 4)
+        
+        # Calculate keep rate (how often card is kept when seen in starting hand)
+        if card_stats['seen_methods'].get('starting_hand', 0) > 0:
+            card_stats['keep_rate'] = round(card_stats['kept_in_starting_hand'] / card_stats['seen_methods']['starting_hand'], 4)
+        else:
+            card_stats['keep_rate'] = 0
         
         # Convert counters to sorted dictionaries for readability
         card_stats['drawn_by_generation'] = dict(sorted(card_stats['drawn_by_generation'].items()))
@@ -1128,94 +1144,120 @@ class CardAnalyzer:
             }
         
         # Calculate player performance statistics
+        def calc_win_rate(stats, win_key, total_key):
+            total = stats.get(total_key, 0)
+            return round((stats.get(win_key, 0) / total) * 100, 4) if total > 0 else 0
+
+        def calc_average_elo(elo_values):
+            """Calculate average ELO from a list of values."""
+            return round(sum(elo_values) / len(elo_values), 4) if elo_values else 0
+
         if card_stats['total_games_analyzed'] > 0:
-            card_stats['win_percentage_overall'] = round((card_stats['win_count'] / card_stats['total_games_with_card']) * 100, 4)
+            # Map of result key -> (win_key, total_key)
+            percentage_fields = {
+                'win_rate_overall': ('win_count', 'total_games_with_card'),
+                'win_rate_when_seen': ('win_count_when_seen', 'total_games_when_seen'),
+                'win_rate_when_drawn': ('win_count_when_drawn', 'total_games_when_drawn_or_bought'),
+                'win_rate_when_bought_during_game': ('win_count_when_bought_during_game', 'total_games_when_bought_during_game'),
+                'win_rate_when_played': ('win_count_when_played', 'total_games_when_played'),
+                'win_rate_with_prelude': ('wins_with_prelude', 'games_with_prelude'),
+                'win_rate_without_prelude': ('wins_without_prelude', 'games_without_prelude')
+            }
+
+            for out_key, (win_key, total_key) in percentage_fields.items():
+                card_stats[out_key] = calc_win_rate(card_stats, win_key, total_key)
+                        
+            # Calculate average ELO gain using actual values (overall)
+            card_stats['average_elo_gain'] = calc_average_elo(card_stats['actual_elo_values'])
             
-            # Calculate win percentage when seen (excluding reveal moves)
-            if card_stats['total_games_when_seen'] > 0:
-                card_stats['win_percentage_when_seen'] = round((card_stats['win_count_when_seen'] / card_stats['total_games_when_seen']) * 100, 4)
-            else:
-                card_stats['win_percentage_when_seen'] = 0
+            # Calculate average ELO rating at game start (overall)
+            card_stats['average_elo'] = calc_average_elo(card_stats['game_ranks'])
             
-            # Calculate win percentage when drawn
-            if card_stats['total_games_when_drawn_or_bought'] > 0:
-                card_stats['win_percentage_when_drawn'] = round((card_stats['win_count_when_drawn'] / card_stats['total_games_when_drawn_or_bought']) * 100, 4)
-            else:
-                card_stats['win_percentage_when_drawn'] = 0
+            # Calculate average ELO gains for each specific case
+            card_stats['average_elo_gain_when_seen'] = calc_average_elo(card_stats['elo_values_when_seen'])
+            card_stats['average_elo_gain_when_drawn'] = calc_average_elo(card_stats['elo_values_when_drawn'])
+            card_stats['average_elo_gain_when_bought_during_game'] = calc_average_elo(card_stats['elo_values_when_bought_during_game'])
+            card_stats['average_elo_gain_when_played'] = calc_average_elo(card_stats['elo_values_when_played'])
             
-            # Calculate win percentage when bought during game
-            if card_stats['total_games_when_bought_during_game'] > 0:
-                card_stats['win_percentage_when_bought_during_game'] = round((card_stats['win_count_when_bought_during_game'] / card_stats['total_games_when_bought_during_game']) * 100, 4)
-            else:
-                card_stats['win_percentage_when_bought_during_game'] = 0
-            
-            # Calculate win percentage when played
-            if card_stats['total_games_when_played'] > 0:
-                card_stats['win_percentage_when_played'] = round((card_stats['win_count_when_played'] / card_stats['total_games_when_played']) * 100, 4)
-            else:
-                card_stats['win_percentage_when_played'] = 0
-            
-            # Calculate prelude-specific win percentages
-            if card_stats['games_with_prelude'] > 0:
-                card_stats['win_percentage_with_prelude'] = round((card_stats['wins_with_prelude'] / card_stats['games_with_prelude']) * 100, 4)
-            else:
-                card_stats['win_percentage_with_prelude'] = 0
-                
-            if card_stats['games_without_prelude'] > 0:
-                card_stats['win_percentage_without_prelude'] = round((card_stats['wins_without_prelude'] / card_stats['games_without_prelude']) * 100, 4)
-            else:
-                card_stats['win_percentage_without_prelude'] = 0
-            
-            # Calculate average ELO gain using actual values
-            if card_stats['actual_elo_values']:
-                card_stats['average_elo_gain'] = round(sum(card_stats['actual_elo_values']) / len(card_stats['actual_elo_values']), 4)
-            else:
-                card_stats['average_elo_gain'] = 0
-            
-            # Calculate average ELO rating at game start
-            if card_stats['game_ranks']:
-                card_stats['average_elo'] = round(sum(card_stats['game_ranks']) / len(card_stats['game_ranks']), 4)
-            else:
-                card_stats['average_elo'] = 0
+            # Calculate average ELO ratings at game start for each specific case
+            card_stats['average_elo_when_seen'] = calc_average_elo(card_stats['game_ranks_when_seen'])
+            card_stats['average_elo_when_drawn'] = calc_average_elo(card_stats['game_ranks_when_drawn'])
+            card_stats['average_elo_when_bought_during_game'] = calc_average_elo(card_stats['game_ranks_when_bought_during_game'])
+            card_stats['average_elo_when_played'] = calc_average_elo(card_stats['game_ranks_when_played'])
         else:
-            card_stats['win_percentage_overall'] = 0
-            card_stats['win_percentage_when_seen'] = 0
-            card_stats['win_percentage_when_drawn'] = 0
-            card_stats['win_percentage_when_bought_during_game'] = 0
-            card_stats['win_percentage_when_played'] = 0
+            card_stats['win_rate_overall'] = 0
+            card_stats['win_rate_when_seen'] = 0
+            card_stats['win_rate_when_drawn'] = 0
+            card_stats['win_rate_when_bought_during_game'] = 0
+            card_stats['win_rate_when_played'] = 0
             card_stats['average_elo_gain'] = 0
             card_stats['average_elo'] = 0
+            # Set all case-specific ELO averages to 0
+            card_stats['average_elo_gain_when_seen'] = 0
+            card_stats['average_elo_gain_when_drawn'] = 0
+            card_stats['average_elo_gain_when_bought_during_game'] = 0
+            card_stats['average_elo_gain_when_played'] = 0
+            card_stats['average_elo_when_seen'] = 0
+            card_stats['average_elo_when_drawn'] = 0
+            card_stats['average_elo_when_bought_during_game'] = 0
+            card_stats['average_elo_when_played'] = 0
         
         # Reorder card_stats to put statistics above moves
         reordered_stats = {
             'card_name': card_stats['card_name'],
             'total_games_analyzed': card_stats['total_games_analyzed'],
             'total_games_with_card': card_stats['total_games_with_card'],
-            'win_count': card_stats['win_count'],
-            'win_percentage_overall': card_stats['win_percentage_overall'],
-            'win_count_when_seen': card_stats['win_count_when_seen'],
-            'win_percentage_when_seen': card_stats['win_percentage_when_seen'],
-            'win_count_when_drawn': card_stats['win_count_when_drawn'],
-            'win_percentage_when_drawn': card_stats['win_percentage_when_drawn'],
-            'win_count_when_bought_during_game': card_stats['win_count_when_bought_during_game'],
-            'win_percentage_when_bought_during_game': card_stats['win_percentage_when_bought_during_game'],
-            'win_count_when_played': card_stats['win_count_when_played'],
-            'win_percentage_when_played': card_stats['win_percentage_when_played'],
-            'average_elo_gain': card_stats['average_elo_gain'],
-            'average_elo': card_stats['average_elo'],
+            'win_count_by_case': {
+                'overall': card_stats['win_count'],
+                'when_seen': card_stats['win_count_when_seen'],
+                'when_drawn': card_stats['win_count_when_drawn'],
+                'when_bought_during_game': card_stats['win_count_when_bought_during_game'],
+                'when_played': card_stats['win_count_when_played']
+            },
+            'win_rate_by_case': {
+                'overall': card_stats['win_rate_overall'],
+                'when_seen': card_stats['win_rate_when_seen'],
+                'when_drawn': card_stats['win_rate_when_drawn'],
+                'when_bought_during_game': card_stats['win_rate_when_bought_during_game'],
+                'when_played': card_stats['win_rate_when_played']
+            },
+            # Case-specific ELO metrics
+            'elo_metrics_by_case': {
+                'overall': {
+                    'average_elo_gain': card_stats['average_elo_gain'],
+                    'average_elo': card_stats['average_elo']
+                },
+                'when_seen': {
+                    'average_elo_gain': card_stats['average_elo_gain_when_seen'],
+                    'average_elo': card_stats['average_elo_when_seen']
+                },
+                'when_drawn': {
+                    'average_elo_gain': card_stats['average_elo_gain_when_drawn'],
+                    'average_elo': card_stats['average_elo_when_drawn']
+                },
+                'when_bought_during_game': {
+                    'average_elo_gain': card_stats['average_elo_gain_when_bought_during_game'],
+                    'average_elo': card_stats['average_elo_when_bought_during_game']
+                },
+                'when_played': {
+                    'average_elo_gain': card_stats['average_elo_gain_when_played'],
+                    'average_elo': card_stats['average_elo_when_played']
+                }
+            },
             # Prelude statistics
             'prelude_stats': {
                 'games_with_prelude': card_stats['games_with_prelude'],
                 'games_without_prelude': card_stats['games_without_prelude'],
-                'win_percentage_with_prelude': card_stats['win_percentage_with_prelude'],
-                'win_percentage_without_prelude': card_stats['win_percentage_without_prelude']
+                'win_rate_with_prelude': card_stats['win_rate_with_prelude'],
+                'win_rate_without_prelude': card_stats['win_rate_without_prelude']
             },
             # Starting hand statistics
             'starting_hand_stats': {
                 'kept_in_starting_hand': card_stats['kept_in_starting_hand'],
                 'kept_and_played': card_stats['kept_and_played'],
                 'kept_but_not_played': card_stats['kept_but_not_played'],
-                'kept_play_rate': card_stats.get('kept_play_rate', 0)
+                'play_to_keep_rate': card_stats.get('play_to_keep_rate', 0),
+                'keep_rate': card_stats.get('keep_rate', 0)
             },
             'drawn_count': card_stats['drawn_count'],
             'played_count': card_stats['played_count'],
@@ -1399,10 +1441,25 @@ class CardAnalyzer:
                 if elo_data and isinstance(elo_data, dict):
                     game_rank_change = elo_data.get('game_rank_change', 0)
                     game_rank = elo_data.get('game_rank', 0)  # Get the player's ELO rating at game start
+                    
                     # Track ELO gain distribution
                     card_stats['elo_gains'][self._get_elo_bucket(game_rank_change)] += 1
                     card_stats['actual_elo_values'].append(game_rank_change) # Store actual value
                     card_stats['game_ranks'].append(game_rank) # Store actual ELO rating
+                    
+                    # Track ELO values separately for each case
+                    if game_with_card_besides_reveal:
+                        card_stats['elo_values_when_seen'].append(game_rank_change)
+                        card_stats['game_ranks_when_seen'].append(game_rank)
+                    if game_has_draw_move:
+                        card_stats['elo_values_when_drawn'].append(game_rank_change)
+                        card_stats['game_ranks_when_drawn'].append(game_rank)
+                    if game_has_buy_move:
+                        card_stats['elo_values_when_bought_during_game'].append(game_rank_change)
+                        card_stats['game_ranks_when_bought_during_game'].append(game_rank)
+                    if game_has_play_move:
+                        card_stats['elo_values_when_played'].append(game_rank_change)
+                        card_stats['game_ranks_when_played'].append(game_rank)
 
     def tfm_card_analyzer(self, card_name: str) -> Dict[str, Any]:
         """
@@ -1480,7 +1537,24 @@ class CardAnalyzer:
                         else:
                             opponent_name = player_name
             
-            # Step 2: Find all draws and plays (count each game only once)
+            # Check if card appears in starting hand data (when MUST_INCLUDE_STARTING_HAND is true)
+            card_in_starting_hand = False
+            if MUST_INCLUDE_STARTING_HAND:
+                for player_data in players.values():
+                    if isinstance(player_data, dict) and 'starting_hand' in player_data:
+                        starting_hand = player_data['starting_hand']
+                        if isinstance(starting_hand, dict):
+                            # Check project cards in starting hand - use exact name matching to avoid false positives
+                            project_cards = starting_hand.get('project_cards', [])
+                            if any(card_name == str(card) for card in project_cards):
+                                card_in_starting_hand = True
+                                break
+            
+            # If card was found in starting hand, add it as a seen method
+            if card_in_starting_hand:
+                card_stats['seen_methods']['starting_hand'] += 1
+            
+            # Find all draws and plays
             for i, move in enumerate(moves):
                 if card_name not in move.get('description', ''):
                     continue
@@ -1550,44 +1624,30 @@ class CardAnalyzer:
                 # Track if this draw move was decided on a bigger number of moves (6 previous moves)
                 additional_draw_decider = False
                 
-                if move_type == "draw" or move_type == "draw_placement":
-                    prev_3_description = moves[i-3].get('description', '') if i > 2 else ''
-                    prev_3_action_type = moves[i-3].get('action_type', '') if i > 2 else ''
-                    prev_4_description = moves[i-4].get('description', '') if i > 3 else ''
-                    prev_4_action_type = moves[i-4].get('action_type', '') if i > 3 else ''
-                    descriptions = descriptions + [prev_3_description, prev_4_description]
-                    action_types = action_types + [prev_3_action_type, prev_4_action_type]
-                    move_type = self._detect_draw_move(
-                    card_name, descriptions, action_types, 
-                    next_description, next_2_description, next_player_id, player_perspective, 
-                    player_perspective_name, opponent_name, generation
-                    )
-                    if move_type == "draw" or move_type == "draw_placement":
-                        prev_5_description = moves[i-5].get('description', '') if i > 4 else ''
-                        prev_5_action_type = moves[i-5].get('action_type', '') if i > 4 else ''
-                        prev_6_description = moves[i-6].get('description', '') if i > 5 else ''
-                        prev_6_action_type = moves[i-6].get('action_type', '') if i > 5 else ''
-                        descriptions = descriptions + [prev_5_description, prev_6_description]
-                        action_types = action_types + [prev_5_action_type, prev_6_action_type]
+                if move_type in ("draw", "draw_placement"):
+                    # Offsets to check progressively
+                    offsets_groups = [
+                        [3, 4],
+                        [5, 6],
+                        [7, 8, 9]
+                    ]
+                    
+                    for offsets in offsets_groups:
+                        for offset in offsets:
+                            if i > offset - 1:
+                                descriptions.append(moves[i - offset].get('description', ''))
+                                action_types.append(moves[i - offset].get('action_type', ''))
+                        
                         move_type = self._detect_draw_move(
-                        card_name, descriptions, action_types, 
-                        next_description, next_2_description, next_player_id, player_perspective, 
-                        player_perspective_name, opponent_name, generation
-                        )
-                        if move_type == "draw" or move_type == "draw_placement":
-                            prev_7_description = moves[i-7].get('description', '') if i > 6 else ''
-                            prev_7_action_type = moves[i-7].get('action_type', '') if i > 6 else ''
-                            prev_8_description = moves[i-8].get('description', '') if i > 7 else ''
-                            prev_8_action_type = moves[i-8].get('action_type', '') if i > 7 else ''
-                            prev_9_description = moves[i-9].get('description', '') if i > 8 else ''
-                            prev_9_action_type = moves[i-9].get('action_type', '') if i > 8 else ''
-                            descriptions = descriptions + [prev_7_description, prev_8_description, prev_9_description]
-                            action_types = action_types + [prev_7_action_type, prev_8_action_type, prev_9_action_type]
-                            move_type = self._detect_draw_move(
                             card_name, descriptions, action_types, 
-                            next_description, next_2_description, next_player_id, player_perspective, 
-                            player_perspective_name, opponent_name, generation
-                            )
+                            next_description, next_2_description, next_player_id,
+                            player_perspective, player_perspective_name,
+                            opponent_name, generation
+                        )
+                        
+                        if move_type not in ("draw", "draw_placement", "draw_prelude"): # undecided types
+                            break
+
                     # Mark this as a draw move that needed additional context
                     additional_draw_decider = True
 
@@ -1680,69 +1740,17 @@ class CardAnalyzer:
             # Check for 2 draft moves close together (< 30 moves apart)
             self._handle_close_draft_moves(card_stats, game_moves, replay_id)
             
-            # Check for multiple seen_method moves in this game
-            # Count actual moves that are seen methods within the current game
-            seen_method_moves = []
-            for move in game_moves:
-                move_type = move.get('move_type', '')
-                if (move_type and 
-                    move_type in card_stats['seen_methods'] and
-                    move_type != 'research_draft_drafted'):
-                    seen_method_moves.append(move)
-            if len(seen_method_moves) > 1:
-                # Store the full move data for moves where card was seen more than once
-                card_stats['moves_card_seen_more_than_once'][replay_id] = game_moves
-            
-            # Count only the last draw occurrence for this game
-            if last_draw_stats_key:
-                card_stats['draw_methods'][last_draw_stats_key] += 1
-                card_stats['drawn_by_generation'][last_draw_generation] += 1
-                card_stats['drawn_count'] += 1
-
-                if last_draw_stats_key in FREE_DRAW_METHODS:
-                    card_stats['draw_free'][last_draw_generation] += 1
-                
-                # Track draws that involve buying by generation
-                if last_draw_stats_key in BUY_METHODS:
-                    card_stats['draw_and_buy'][last_draw_generation] += 1
-
-                # Track draws from Restricted Area by generation
-                if last_draw_stats_key == "draw_restricted_area":
-                    card_stats['draw_for_2'][last_draw_generation] += 1
+            # Process game draw statistics using the new function
+            self._process_game_draw_statistics(card_stats, game_moves, replay_id, last_draw_stats_key, last_draw_generation, card_in_starting_hand)
             
             # Count games where card appeared in any way
             if any(not move['move_type'].startswith('other') for move in game_moves):  # Check for actual moves with this card
+                
                 card_stats['total_games_with_card'] += 1
                 card_stats['game_moves_by_card'][replay_id] = game_moves
-                
-                # Track different game types for win percentage calculations
-                game_with_card_besides_reveal = any(((move['move_type'] in card_stats['seen_methods'] and
-                                                    not move['move_type'].startswith('reveal')) or
-                                          move['move_type'] in card_stats['draw_methods'])
-                                          for move in game_moves)
-                game_has_any_draw_move = any(move['move_type'] in card_stats['draw_methods'] for move in game_moves)
-                game_has_draw_no_buy_move = any((move['move_type'] in card_stats['draw_methods'] and
-                                                 move['move_type'] not in BUY_METHODS and move['move_type'] != "draw_start"
-                                                 ) for move in game_moves)
-                game_has_buy_move = any(move['move_type'] in BUY_METHODS for move in game_moves)
-                game_has_play_move = any(move['move_type'] == 'play' for move in game_moves)
-
-                if game_with_card_besides_reveal:
-                    card_stats['total_games_when_seen'] += 1
-                if game_has_any_draw_move:
-                    card_stats['total_games_when_drawn_or_bought'] += 1
-                if game_has_buy_move:
-                    card_stats['total_games_when_bought_during_game'] += 1
-                if game_has_play_move:
-                    card_stats['total_games_when_played'] += 1
-                    
-                # Track plays under specific conditions for rate calculations
-                if game_has_buy_move and game_has_play_move:
-                    card_stats['plays_when_bought_during_game'] += 1
-                if (game_has_buy_move or kept_in_hand) and game_has_play_move:
-                    card_stats['plays_when_bought_overall'] += 1
-                if game_has_draw_no_buy_move and game_has_play_move:
-                    card_stats['plays_when_drawn'] += 1
+                # Track game types and plays using the new function
+                game_with_card_besides_reveal, game_has_any_draw_move, game_has_buy_move, game_has_play_move = self._track_game_types_and_plays(
+                    card_stats, game_moves, kept_in_hand, card_in_starting_hand)
 
                 # Determine winner and analyze player_perspective performance
                 self._analyze_player_performance(game, player_perspective, card_stats,
@@ -2035,3 +2043,99 @@ class CardAnalyzer:
             return "other_takeback_draft"
         else:
             return "other"
+
+    def _track_game_types_and_plays(self, card_stats: Dict[str, Any], game_moves: list, kept_in_hand: bool, card_in_starting_hand: bool) -> tuple[bool, bool, bool]:
+        """
+        Track different game types and plays for win percentage calculations.
+        
+        Args:
+            card_stats: Card statistics dictionary to update
+            game_moves: List of moves for the current game
+            kept_in_hand: Whether the card was kept in starting hand
+            card_in_starting_hand: Whether the card was found in starting hand data
+            
+        Returns:
+            Tuple of (game_with_card_besides_reveal, game_has_any_draw_move, game_has_buy_move, game_has_play_move)
+        """
+        game_with_card_besides_reveal = any(((move['move_type'] in card_stats['seen_methods'] and
+                                            not move['move_type'].startswith('reveal')) or
+                                    move['move_type'] in card_stats['draw_methods'])
+                                    for move in game_moves)
+        
+        # Also check if card was seen in starting hand data
+        if card_in_starting_hand:
+            game_with_card_besides_reveal = True
+        
+        game_has_any_draw_move = any(move['move_type'] in card_stats['draw_methods'] for move in game_moves)
+        game_has_draw_no_buy_move = any((move['move_type'] in card_stats['draw_methods'] and
+                                         move['move_type'] not in BUY_METHODS and move['move_type'] != "draw_start"
+                                         ) for move in game_moves)
+        game_has_buy_move = any(move['move_type'] in BUY_METHODS for move in game_moves)
+        game_has_play_move = any(move['move_type'] == 'play' for move in game_moves)
+
+        if game_with_card_besides_reveal:
+            card_stats['total_games_when_seen'] += 1
+        if game_has_any_draw_move:
+            card_stats['total_games_when_drawn_or_bought'] += 1
+        if game_has_buy_move:
+            card_stats['total_games_when_bought_during_game'] += 1
+        if game_has_play_move:
+            card_stats['total_games_when_played'] += 1
+            
+        # Track plays under specific conditions for rate calculations
+        if game_has_buy_move and game_has_play_move:
+            card_stats['plays_when_bought_during_game'] += 1
+        if (game_has_buy_move or kept_in_hand) and game_has_play_move:
+            card_stats['plays_when_bought_overall'] += 1
+        if game_has_draw_no_buy_move and game_has_play_move:
+            card_stats['plays_when_drawn'] += 1
+            
+        return game_with_card_besides_reveal, game_has_any_draw_move, game_has_buy_move, game_has_play_move
+
+    def _process_game_draw_statistics(self, card_stats: Dict[str, Any], game_moves: list, replay_id: str, 
+                                     last_draw_stats_key: str, last_draw_generation: int, card_in_starting_hand: bool) -> None:
+        """
+        Process draw statistics for a specific game, including multiple seen method detection and draw counting.
+        
+        Args:
+            card_stats: Card statistics dictionary to update
+            game_moves: List of moves for the current game
+            replay_id: ID of the current replay
+            last_draw_stats_key: The key for the last draw method in this game
+            last_draw_generation: The generation when the last draw occurred
+            card_in_starting_hand: Whether the card was found in starting hand data
+        """
+        # Check for multiple seen_method moves in this game
+        # Count actual moves that are seen methods within the current game
+        seen_method_moves = []
+        for move in game_moves:
+            move_type = move.get('move_type', '')
+            if (move_type and 
+                move_type in card_stats['seen_methods'] and
+                move_type != 'research_draft_drafted'):
+                seen_method_moves.append(move)
+        
+        # Also check if card was seen in starting hand data
+        if card_in_starting_hand:
+            seen_method_moves.append({'move_type': 'starting_hand', 'description': 'Card found in starting hand data'})
+        
+        if len(seen_method_moves) > 1:
+            # Store the full move data for moves where card was seen more than once
+            card_stats['moves_card_seen_more_than_once'][replay_id] = game_moves
+        
+        # Count only the last draw occurrence for this game
+        if last_draw_stats_key:
+            card_stats['draw_methods'][last_draw_stats_key] += 1
+            card_stats['drawn_by_generation'][last_draw_generation] += 1
+            card_stats['drawn_count'] += 1
+
+            if last_draw_stats_key in FREE_DRAW_METHODS:
+                card_stats['draw_free'][last_draw_generation] += 1
+            
+            # Track draws that involve buying by generation
+            if last_draw_stats_key in BUY_METHODS:
+                card_stats['draw_and_buy'][last_draw_generation] += 1
+
+            # Track draws from Restricted Area by generation
+            if last_draw_stats_key == "draw_restricted_area":
+                card_stats['draw_for_2'][last_draw_generation] += 1

@@ -64,7 +64,17 @@ def main():
     # Initialize analyzer with path from config
     print("Starting Terraforming Mars Multi-Card Analysis")
     print("=" * 60)
-    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players, Colonies={'OFF' if COLONIES_MUST_BE_OFF else 'ON'}, Corporate Era={'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}, Draft={'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
+    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players")
+    print(f"Colonies: {'OFF' if COLONIES_MUST_BE_OFF else 'ON'}")
+    print(f"Corporate Era: {'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}")
+    print(f"Draft: {'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
+    
+    # Display prelude filter if configured
+    print(f"Prelude: {'ON' if PRELUDE_MUST_BE_ON else 'OFF'}")
+    
+    # Display starting hand filter if configured
+    print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
+    
     print(f"Cache: {'Enabled' if use_cache else 'Disabled'}")
     print(f"Cards to analyze: {len(cards_to_analyze)}")
     print("=" * 60)

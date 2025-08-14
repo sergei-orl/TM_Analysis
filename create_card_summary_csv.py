@@ -1,8 +1,9 @@
 """
 Script to create comprehensive CSV summaries of all card analysis data.
-Reads all card_analysis_*.json files and creates two CSV files:
+Reads all card_analysis_*.json files and creates three CSV files:
 1. card_summary_values.csv - Contains all individual values and counts
 2. card_summary_dicts.csv - Contains only the dictionary summaries
+3. card_summary_interactions.csv - Contains card interaction data (draw methods, seen methods, etc.)
 
 Optionally uploads to Google Sheets with -u or --update_sheets flag.
 """
@@ -25,6 +26,16 @@ except ImportError:
     print("Please copy 'config_template.py' to 'config.py' and update the paths.")
     import sys
     sys.exit(1)
+
+# Global constants for sheet names
+VALUES_SHEET_NAME = 'Values'
+DICTS_SHEET_NAME = 'Dicts'
+INTERACTIONS_SHEET_NAME = 'Card Interactions'
+
+# Global constants for file names
+VALUES_FILE_SUFFIX = '_values.csv'
+DICTS_FILE_SUFFIX = '_dicts.csv'
+INTERACTIONS_FILE_SUFFIX = '_interactions.csv'
 
 def load_all_card_analyses(analysis_dir: str = None) -> List[Dict[str, Any]]:
     """
@@ -117,50 +128,53 @@ def create_values_csv_headers(unique_fields: Dict[str, Set[str]]) -> List[str]:
         'card_name',
         'total_games_analyzed',
         'total_games_with_card',
-        
-        # Win statistics
-        'win_count',
-        'win_percentage_overall',
-        'win_count_when_seen',
-        'win_percentage_when_seen',
-        'win_count_when_drawn',
-        'win_percentage_when_drawn',
-        'win_count_when_bought_during_game',
-        'win_percentage_when_bought_during_game',
-        'win_count_when_played',
-        'win_percentage_when_played',
-        
-        # ELO statistics
-        'average_elo_gain',
-        'average_elo',
-        'incorrect_elo',
-        
-        # Prelude statistics
         'games_with_prelude',
-        'games_without_prelude',
-        'win_percentage_with_prelude',
-        'win_percentage_without_prelude',
-        
-        # Starting hand statistics
-        'kept_in_starting_hand',
-        'kept_and_played',
-        'kept_but_not_played',
-        'kept_play_rate',
-        
-        # Draw and play counts
         'drawn_count',
         'played_count',
         
-        # Draft and buy statistics
-        'draft_1_buys',
-        'draft_2_buys',
-        'draft_3_buys',
-        'draft_4_buys',
+        # Win statistics and ELO gains by case (grouped)
+        'win_rate_overall',
+        'elo_gain_overall',
+        'win_rate_when_seen',
+        'elo_gain_when_seen',
+        'win_rate_when_drawn',
+        'elo_gain_when_drawn',
+        'win_rate_when_bought_during_game',
+        'elo_gain_when_bought_during_game',
+        'win_rate_when_played',
+        'elo_gain_when_played',
+        
+        # Win counts by case
+        'win_count_overall',
+        'win_count_when_seen',
+        'win_count_when_drawn',
+        'win_count_when_bought_during_game',
+        'win_count_when_played',
+        
+        # Average ELO by case
+        'avg_elo_overall',
+        'avg_elo_when_seen',
+        'avg_elo_when_drawn',
+        'avg_elo_when_bought_during_game',
+        'avg_elo_when_played',
+        
+        # Starting hand statistics (rates first, then counts)
+        'play_to_keep_rate',
+        'keep_rate',
+        'kept_in_starting_hand',
+        'kept_and_played',
+        'kept_but_not_played',
+        
+        # Draft and buy statistics (rates first, then counts)
         'buy_to_draft_rate',
         'buy_to_draft_1_rate',
         'buy_to_draft_2_rate',
         'buy_to_draft_3_rate',
         'buy_to_draft_4_rate',
+        'draft_1_buys',
+        'draft_2_buys',
+        'draft_3_buys',
+        'draft_4_buys',
         
         # Play rate statistics
         'play_to_buy_during_game_rate',
@@ -170,15 +184,38 @@ def create_values_csv_headers(unique_fields: Dict[str, Set[str]]) -> List[str]:
         'plays_when_bought_overall',
         'plays_when_drawn',
         
+        # Keep rates and other rates
+        'business_contacts_keep_rate',
+        'business_network_buy_rate',
+        'invention_contest_keep_rate',
+        'inventors_guild_buy_rate',
+        'draft_1_rate',
+        'draft_3_rate',
+        'card_buy_through_card_rate',
+        
         # Payment statistics
         'min_payment',
         'max_payment',
         'avg_payment',
     ]
     
-    # Add individual keep_rates columns (without double prefix)
-    for keep_rate in sorted(unique_fields['keep_rates']):
-        headers.append(keep_rate)
+    return headers
+
+def create_interactions_csv_headers(unique_fields: Dict[str, Set[str]]) -> List[str]:
+    """
+    Create the complete list of CSV headers for the interactions CSV.
+    
+    Args:
+        unique_fields: Dictionary of unique field values
+        
+    Returns:
+        List of CSV column headers
+    """
+    headers = [
+        'card_name',
+        'total_games_analyzed',
+        'total_games_with_card',
+    ]
     
     # Add individual draw method columns
     for draw_method in sorted(unique_fields['draw_methods']):
@@ -307,52 +344,72 @@ def extract_values_row(card: Dict[str, Any], unique_fields: Dict[str, Set[str]])
     row.append(card.get('total_games_analyzed', 0))
     row.append(card.get('total_games_with_card', 0))
     
-    # Win statistics
-    row.append(card.get('win_count', 0))
-    row.append(card.get('win_percentage_overall', 0))
-    row.append(card.get('win_count_when_seen', 0))
-    row.append(card.get('win_percentage_when_seen', 0))
-    row.append(card.get('win_count_when_drawn', 0))
-    row.append(card.get('win_percentage_when_drawn', 0))
-    row.append(card.get('win_count_when_bought_during_game', 0))
-    row.append(card.get('win_percentage_when_bought_during_game', 0))
-    row.append(card.get('win_count_when_played', 0))
-    row.append(card.get('win_percentage_when_played', 0))
-    
-    # ELO statistics
-    row.append(card.get('average_elo_gain', 0))
-    row.append(card.get('average_elo', 0))
-    row.append(card.get('incorrect_elo', 0))
-    
-    # Prelude statistics
+    # Prelude games count
     prelude_stats = card.get('prelude_stats', {})
     row.append(prelude_stats.get('games_with_prelude', 0))
-    row.append(prelude_stats.get('games_without_prelude', 0))
-    row.append(prelude_stats.get('win_percentage_with_prelude', 0))
-    row.append(prelude_stats.get('win_percentage_without_prelude', 0))
-    
-    # Starting hand statistics
-    starting_hand_stats = card.get('starting_hand_stats', {})
-    row.append(starting_hand_stats.get('kept_in_starting_hand', 0))
-    row.append(starting_hand_stats.get('kept_and_played', 0))
-    row.append(starting_hand_stats.get('kept_but_not_played', 0))
-    row.append(starting_hand_stats.get('kept_play_rate', 0))
     
     # Draw and play counts
     row.append(card.get('drawn_count', 0))
     row.append(card.get('played_count', 0))
     
-    # Draft and buy statistics
+    # Win statistics and ELO gains by case (grouped)
+    win_count_by_case = card.get('win_count_by_case', {})
+    win_rate_by_case = card.get('win_rate_by_case', {})
+    elo_metrics_by_case = card.get('elo_metrics_by_case', {})
+    
+    # Group 1: Overall
+    row.append(win_rate_by_case.get('overall', 0))
+    row.append(elo_metrics_by_case.get('overall', {}).get('average_elo_gain', 0))
+    
+    # Group 2: When seen
+    row.append(win_rate_by_case.get('when_seen', 0))
+    row.append(elo_metrics_by_case.get('when_seen', {}).get('average_elo_gain', 0))
+    
+    # Group 3: When drawn
+    row.append(win_rate_by_case.get('when_drawn', 0))
+    row.append(elo_metrics_by_case.get('when_drawn', {}).get('average_elo_gain', 0))
+    
+    # Group 4: When bought during game
+    row.append(win_rate_by_case.get('when_bought_during_game', 0))
+    row.append(elo_metrics_by_case.get('when_bought_during_game', {}).get('average_elo_gain', 0))
+    
+    # Group 5: When played
+    row.append(win_rate_by_case.get('when_played', 0))
+    row.append(elo_metrics_by_case.get('when_played', {}).get('average_elo_gain', 0))
+    
+    # Win counts by case
+    row.append(win_count_by_case.get('overall', 0))
+    row.append(win_count_by_case.get('when_seen', 0))
+    row.append(win_count_by_case.get('when_drawn', 0))
+    row.append(win_count_by_case.get('when_bought_during_game', 0))
+    row.append(win_count_by_case.get('when_played', 0))
+    
+    # Average ELO by case
+    row.append(elo_metrics_by_case.get('overall', {}).get('average_elo', 0))
+    row.append(elo_metrics_by_case.get('when_seen', {}).get('average_elo', 0))
+    row.append(elo_metrics_by_case.get('when_drawn', {}).get('average_elo', 0))
+    row.append(elo_metrics_by_case.get('when_bought_during_game', {}).get('average_elo', 0))
+    row.append(elo_metrics_by_case.get('when_played', {}).get('average_elo', 0))
+    
+    # Starting hand statistics (rates first, then counts)
+    starting_hand_stats = card.get('starting_hand_stats', {})
+    row.append(starting_hand_stats.get('play_to_keep_rate', 0))
+    row.append(starting_hand_stats.get('keep_rate', 0))
+    row.append(starting_hand_stats.get('kept_in_starting_hand', 0))
+    row.append(starting_hand_stats.get('kept_and_played', 0))
+    row.append(starting_hand_stats.get('kept_but_not_played', 0))
+    
+    # Draft and buy statistics (rates first, then counts)
     draft_buy_stats = card.get('draft_buy_stats', {})
-    row.append(draft_buy_stats.get('draft_1_buys', 0))
-    row.append(draft_buy_stats.get('draft_2_buys', 0))
-    row.append(draft_buy_stats.get('draft_3_buys', 0))
-    row.append(draft_buy_stats.get('draft_4_buys', 0))
     row.append(draft_buy_stats.get('buy_to_draft_rate', 0))
     row.append(draft_buy_stats.get('buy_to_draft_1_rate', 0))
     row.append(draft_buy_stats.get('buy_to_draft_2_rate', 0))
     row.append(draft_buy_stats.get('buy_to_draft_3_rate', 0))
     row.append(draft_buy_stats.get('buy_to_draft_4_rate', 0))
+    row.append(draft_buy_stats.get('draft_1_buys', 0))
+    row.append(draft_buy_stats.get('draft_2_buys', 0))
+    row.append(draft_buy_stats.get('draft_3_buys', 0))
+    row.append(draft_buy_stats.get('draft_4_buys', 0))
     
     # Play rate statistics
     play_rate_stats = card.get('play_rate_stats', {})
@@ -363,16 +420,40 @@ def extract_values_row(card: Dict[str, Any], unique_fields: Dict[str, Set[str]])
     row.append(play_rate_stats.get('plays_when_bought_overall', 0))
     row.append(play_rate_stats.get('plays_when_drawn', 0))
     
+    # Keep rates and other rates
+    row.append(card.get('keep_rates', {}).get('business_contacts_keep_rate', 0))
+    row.append(card.get('keep_rates', {}).get('business_network_buy_rate', 0))
+    row.append(card.get('keep_rates', {}).get('invention_contest_keep_rate', 0))
+    row.append(card.get('keep_rates', {}).get('inventors_guild_buy_rate', 0))
+    row.append(card.get('keep_rates', {}).get('draft_1_rate', 0))
+    row.append(card.get('keep_rates', {}).get('draft_3_rate', 0))
+    row.append(card.get('keep_rates', {}).get('card_buy_through_card_rate', 0))
+    
     # Payment statistics
     payment_stats = card.get('payment_stats', {})
     row.append(payment_stats.get('min_payment', 0))
     row.append(payment_stats.get('max_payment', 0))
     row.append(payment_stats.get('avg_payment', 0))
     
-    # Individual keep_rates counts
-    keep_rates = card.get('keep_rates', {})
-    for keep_rate in sorted(unique_fields['keep_rates']):
-        row.append(keep_rates.get(keep_rate, 0))
+    return row
+
+def extract_interactions_row(card: Dict[str, Any], unique_fields: Dict[str, Set[str]]) -> List[Any]:
+    """
+    Extract a single row of interaction data from a card analysis for the interactions CSV.
+    
+    Args:
+        card: Card analysis dictionary
+        unique_fields: Dictionary of unique field values
+        
+    Returns:
+        List of values for the CSV row
+    """
+    row = []
+    
+    # Basic card info
+    row.append(card.get('card_name', ''))
+    row.append(card.get('total_games_analyzed', 0))
+    row.append(card.get('total_games_with_card', 0))
     
     # Individual draw method counts
     draw_methods = card.get('draw_methods', {})
@@ -426,7 +507,7 @@ def extract_dicts_row(card: Dict[str, Any]) -> List[Any]:
 
 def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None):
     """
-    Create two comprehensive CSV summary files of all card analysis data.
+    Create three comprehensive CSV summary files of all card analysis data.
     
     Args:
         output_prefix: Prefix for output CSV file names (uses config default if None)
@@ -447,12 +528,14 @@ def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None
     # Create CSV headers
     values_headers = create_values_csv_headers(unique_fields)
     dicts_headers = create_dicts_csv_headers()
+    interactions_headers = create_interactions_csv_headers(unique_fields)
     
     print(f"Created {len(values_headers)} columns for values CSV")
     print(f"Created {len(dicts_headers)} columns for dicts CSV")
+    print(f"Created {len(interactions_headers)} columns for interactions CSV")
     
     # Write values CSV file
-    values_file = f"{output_prefix}_values.csv"
+    values_file = f"{output_prefix}{VALUES_FILE_SUFFIX}"
     print(f"Writing values CSV to {values_file}...")
     with open(values_file, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
@@ -469,7 +552,7 @@ def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None
                 print(f"Processed {i + 1}/{len(card_analyses)} cards for values CSV...")
     
     # Write dicts CSV file
-    dicts_file = f"{output_prefix}_dicts.csv"
+    dicts_file = f"{output_prefix}{DICTS_FILE_SUFFIX}"
     print(f"Writing dicts CSV to {dicts_file}...")
     with open(dicts_file, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
@@ -485,9 +568,27 @@ def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None
             if (i + 1) % 100 == 0:
                 print(f"Processed {i + 1}/{len(card_analyses)} cards for dicts CSV...")
     
-    print(f"✅ Successfully created both CSV files:")
+    # Write interactions CSV file
+    interactions_file = f"{output_prefix}{INTERACTIONS_FILE_SUFFIX}"
+    print(f"Writing interactions CSV to {interactions_file}...")
+    with open(interactions_file, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        
+        # Write header
+        writer.writerow(interactions_headers)
+        
+        # Write data rows
+        for i, card in enumerate(card_analyses):
+            row = extract_interactions_row(card, unique_fields)
+            writer.writerow(row)
+            
+            if (i + 1) % 100 == 0:
+                print(f"Processed {i + 1}/{len(card_analyses)} cards for interactions CSV...")
+    
+    print(f"✅ Successfully created all three CSV files:")
     print(f"  📊 Values CSV: {values_file} ({len(values_headers)} columns)")
     print(f"  📊 Dicts CSV: {dicts_file} ({len(dicts_headers)} columns)")
+    print(f"  📊 Interactions CSV: {interactions_file} ({len(interactions_headers)} columns)")
     print(f"📊 Processed {len(card_analyses)} cards total")
     
     # Print summary of unique fields found
@@ -495,13 +596,14 @@ def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None
     for field_name, field_values in unique_fields.items():
         print(f"  {field_name}: {len(field_values)} unique values")
 
-def upload_to_google_sheets(values_file: str, dicts_file: str, sheet_id: str = None, credentials_file: str = None):
+def upload_to_google_sheets(values_file: str, dicts_file: str, interactions_file: str, sheet_id: str = None, credentials_file: str = None):
     """
     Upload CSV data to Google Sheets.
     
     Args:
         values_file: Path to the values CSV file
         dicts_file: Path to the dicts CSV file
+        interactions_file: Path to the interactions CSV file
         sheet_id: Google Sheets ID (uses config default if None)
         credentials_file: Path to the service account credentials JSON file (uses config default if None)
     """
@@ -529,8 +631,8 @@ def upload_to_google_sheets(values_file: str, dicts_file: str, sheet_id: str = N
         sheet = client.open_by_key(sheet_id)
         
         # Upload values CSV
-        print(f"📤 Uploading values CSV to 'Values' worksheet...")
-        values_worksheet = sheet.worksheet('Values') if 'Values' in [ws.title for ws in sheet.worksheets()] else sheet.add_worksheet(title='Values', rows=1000, cols=100)
+        print(f"📤 Uploading values CSV to '{VALUES_SHEET_NAME}' worksheet...")
+        values_worksheet = sheet.worksheet(VALUES_SHEET_NAME) if VALUES_SHEET_NAME in [ws.title for ws in sheet.worksheets()] else sheet.add_worksheet(title=VALUES_SHEET_NAME, rows=1000, cols=100)
         
         with open(values_file, 'r', encoding='utf-8') as f:
             csv_data = list(csv.reader(f))
@@ -541,8 +643,8 @@ def upload_to_google_sheets(values_file: str, dicts_file: str, sheet_id: str = N
         print(f"✅ Values CSV uploaded successfully ({len(csv_data)} rows)")
         
         # Upload dicts CSV
-        print(f"📤 Uploading dicts CSV to 'Dicts' worksheet...")
-        dicts_worksheet = sheet.worksheet('Dicts') if 'Dicts' in [ws.title for ws in sheet.worksheets()] else sheet.add_worksheet(title='Dicts', rows=1000, cols=50)
+        print(f"📤 Uploading dicts CSV to '{DICTS_SHEET_NAME}' worksheet...")
+        dicts_worksheet = sheet.worksheet(DICTS_SHEET_NAME) if DICTS_SHEET_NAME in [ws.title for ws in sheet.worksheets()] else sheet.add_worksheet(title=DICTS_SHEET_NAME, rows=1000, cols=50)
         
         with open(dicts_file, 'r', encoding='utf-8') as f:
             csv_data = list(csv.reader(f))
@@ -551,6 +653,18 @@ def upload_to_google_sheets(values_file: str, dicts_file: str, sheet_id: str = N
         dicts_worksheet.clear()
         dicts_worksheet.update('A1', csv_data)
         print(f"✅ Dicts CSV uploaded successfully ({len(csv_data)} rows)")
+        
+        # Upload interactions CSV
+        print(f"📤 Uploading interactions CSV to '{INTERACTIONS_SHEET_NAME}' worksheet...")
+        interactions_worksheet = sheet.worksheet(INTERACTIONS_SHEET_NAME) if INTERACTIONS_SHEET_NAME in [ws.title for ws in sheet.worksheets()] else sheet.add_worksheet(title=INTERACTIONS_SHEET_NAME, rows=1000, cols=100)
+        
+        with open(interactions_file, 'r', encoding='utf-8') as f:
+            csv_data = list(csv.reader(f))
+        
+        # Clear existing data and upload new data
+        interactions_worksheet.clear()
+        interactions_worksheet.update('A1', csv_data)
+        print(f"✅ Interactions CSV uploaded successfully ({len(csv_data)} rows)")
         
         print(f"🎉 All data uploaded to Google Sheets successfully!")
         print(f"🔗 Sheet URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
@@ -612,22 +726,23 @@ def main():
     
     # Upload to Google Sheets if requested and configured
     if update_sheets:
-        values_file = f"{output_prefix}_values.csv"
-        dicts_file = f"{output_prefix}_dicts.csv"
+        values_file = f"{output_prefix}{VALUES_FILE_SUFFIX}"
+        dicts_file = f"{output_prefix}{DICTS_FILE_SUFFIX}"
+        interactions_file = f"{output_prefix}{INTERACTIONS_FILE_SUFFIX}"
         
         # Check if CSV files exist
-        if not Path(values_file).exists() or not Path(dicts_file).exists():
+        if not Path(values_file).exists() or not Path(dicts_file).exists() or not Path(interactions_file).exists():
             print(f"❌ Error: CSV files not found. Cannot upload to Google Sheets.")
             return
         
         print(f"\n🔄 Starting Google Sheets upload...")
-        upload_to_google_sheets(values_file, dicts_file, sheet_id, credentials_file)
+        upload_to_google_sheets(values_file, dicts_file, interactions_file, sheet_id, credentials_file)
     
     print("\nUsage:")
     print("  python create_card_summary_csv.py [output_prefix] [analysis_dir]")
     print("  python create_card_summary_csv.py [output_prefix] [analysis_dir] -u")
     print("  Example: python create_card_summary_csv.py my_summary analysis_output -u")
-    print("  This will create: my_summary_values.csv and my_summary_dicts.csv")
+    print("  This will create: my_summary_values.csv, my_summary_dicts.csv, and my_summary_interactions.csv")
     if GOOGLE_SHEETS_ID and GOOGLE_CREDENTIALS_FILE:
         print("  And upload them to Google Sheets (if -u flag is used)")
     else:

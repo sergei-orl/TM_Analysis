@@ -17,6 +17,10 @@ COLONIES_MUST_BE_OFF = True
 CORPORATE_ERA_MUST_BE_ON = True
 DRAFT_MUST_BE_ON = True
 
+# Additional filtering options
+PRELUDE_MUST_BE_ON = True
+MUST_INCLUDE_STARTING_HAND = True
+
 # Card Summary CSV settings
 CARD_SUMMARY_OUTPUT_PREFIX = "card_summary"
 CARD_SUMMARY_ANALYSIS_DIR = "analysis_output"
