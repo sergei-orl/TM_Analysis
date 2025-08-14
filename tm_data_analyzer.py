@@ -6,6 +6,7 @@ import pickle
 import hashlib
 from card_analyzer import CardAnalyzer
 import sys
+import time
 
 # Import configuration
 try:
@@ -210,19 +211,20 @@ class TerraformingMarsAnalyzer:
 
     def _apply_additional_filters_to_cached_data(self):
         """
-        Apply Prelude and Starting Hand filters to already loaded games data.
+        Apply Prelude, Starting Hand, and Opponent ELO filters to already loaded games data.
         This allows changing these filters without rebuilding the cache.
         """
         if not self.games_data:
             return
         
-        # Filter out games that don't match Prelude and Starting Hand criteria
+        # Filter out games that don't match additional criteria
         filtered_games = []
         
         for game_data in self.games_data:
             # Check prelude setting
-            if game_data.get('prelude_on', False) != PRELUDE_MUST_BE_ON:
-                continue
+            if PRELUDE_MUST_BE_ON:
+                if not game_data.get('prelude_on', False):
+                    continue
             
             # Check starting hand requirement
             if MUST_INCLUDE_STARTING_HAND:
@@ -235,6 +237,37 @@ class TerraformingMarsAnalyzer:
                         break
                 if not has_starting_hand:
                     continue
+            
+            # Check opponent ELO requirement
+            if PLAYERS_ELO_OVER_300:
+                players = game_data.get('players', {})
+                
+                # Check if all players have ELO >= 300
+                for player_data in players.values():
+                    if isinstance(player_data, dict):
+                        elo_data = player_data.get('elo_data', {})
+                        
+                        # Check if elo_data exists and is a dict
+                        if not elo_data or not isinstance(elo_data, dict):
+                            break  # Exit player loop - this game is invalid
+                        
+                        # Get game_rank with sentinel value, check if it's the sentinel
+                        game_rank = elo_data.get('game_rank', 'MISSING')
+                        if game_rank == 'MISSING':
+                            break  # Exit player loop - this game is invalid
+                        
+                        # Convert to int and check threshold
+                        try:
+                            player_elo = int(game_rank)
+                            if player_elo < 300:
+                                break  # Exit player loop - this game is invalid
+                        except (ValueError, TypeError):
+                            # Exit player loop - this game has invalid ELO data
+                            break
+                else:
+                    # Loop completed without break - ALL players passed the ELO check
+                    # Continue with this game
+                    pass
             
             # Game passed all additional filters
             filtered_games.append(game_data)
@@ -278,6 +311,92 @@ class TerraformingMarsAnalyzer:
             
         return True
 
+    def analyze_multiple_cards(self, cards_to_analyze: list, use_cache: bool = True):
+        """
+        Analyze multiple cards using the provided analyzer.
+        This function can be reused by other scripts to avoid duplication.
+        
+        Args:
+            analyzer: Initialized TerraformingMarsAnalyzer instance
+            cards_to_analyze: List of card names to analyze
+            use_cache: Whether cache is enabled
+            
+        Returns:
+            Tuple of (successful_analyses, failed_analyses)
+        """
+        # Load all games (filtering happens during loading)
+        print("\nLoading games data...")
+        games_loaded = self.load_all_games(use_cache=use_cache)
+        
+        if games_loaded == 0:
+            print("No games found matching criteria. Please check the data directory path in config.py")
+            return 0, 0
+        
+        print(f"✅ Loaded {games_loaded} filtered games")
+        
+        # Analyze each card one by one
+        print(f"\nStarting analysis of {len(cards_to_analyze)} cards...")
+        print("-" * 60)
+        
+        successful_analyses = 0
+        failed_analyses = 0
+        
+        for i, card_name in enumerate(cards_to_analyze, 1):
+            print(f"\n[{i}/{len(cards_to_analyze)}] {time.strftime('%H:%M:%S')} Analyzing card: '{card_name}'")
+            
+            try:
+                # Create a new CardAnalyzer instance for each card to ensure clean state
+                card_analyzer = CardAnalyzer(self.games_data)
+                
+                # Analyze the card
+                card_stats = card_analyzer.save_card_analysis(card_name)
+                
+                if card_stats['total_games_analyzed'] > 0:
+                    print(f"✅ Successfully analyzed '{card_name}': {card_stats['total_games_analyzed']} games")
+                    successful_analyses += 1
+                else:
+                    print(f"⚠️  No games found for card: '{card_name}'")
+                    failed_analyses += 1
+                    
+            except Exception as e:
+                print(f"❌ Error analyzing '{card_name}': {e}")
+                failed_analyses += 1
+            
+            # Add a small delay between analyses to avoid overwhelming the system
+            if i < len(cards_to_analyze):
+                print("Waiting 0.5 seconds before next analysis...")
+                time.sleep(0.5)
+        
+        return successful_analyses, failed_analyses
+
+def display_analysis_settings(replay_id_filter: str = None, card_name: str = None, use_cache: bool = True):
+    """
+    Display the current analysis settings in a formatted way.
+    This function can be reused by other scripts to avoid duplication.
+    
+    Args:
+        replay_id_filter: Optional replay ID filter to display
+        card_name: Optional card name to display
+        use_cache: Whether cache is enabled
+    """
+    print("Starting Terraforming Mars Data Analysis")
+    print("=" * 50)
+    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players")
+    print(f"Colonies: {'OFF' if COLONIES_MUST_BE_OFF else 'ON'}")
+    print(f"Corporate Era: {'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}")
+    print(f"Draft: {'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
+    
+    print(f"Prelude Required: {'ON' if PRELUDE_MUST_BE_ON else 'OFF'}")
+    print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
+    print(f"Players ELO Over 300 Required: {'Yes' if PLAYERS_ELO_OVER_300 else 'No'}")
+    
+    if replay_id_filter:
+        print(f"🔍 Additional filter: Replay ID = {replay_id_filter}")
+    if card_name:
+        print(f"Analyzing card: '{card_name}'")
+    print(f"Cache: {'Enabled' if use_cache else 'Disabled'}")
+    print("=" * 50)
+
 def main():
     """
     Main function to run the Terraforming Mars analyzer.
@@ -310,24 +429,7 @@ def main():
         print(f"🔍 Filtering for specific replay ID: {replay_id_filter}")
     
     # Load all games (filtering happens during loading)
-    print("Starting Terraforming Mars Data Analysis")
-    print("=" * 50)
-    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players")
-    print(f"Colonies: {'OFF' if COLONIES_MUST_BE_OFF else 'ON'}")
-    print(f"Corporate Era: {'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}")
-    print(f"Draft: {'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
-    
-    # Display prelude filter if configured
-    print(f"Prelude: {'ON' if PRELUDE_MUST_BE_ON else 'OFF'}")
-    
-    # Display starting hand filter if configured
-    print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
-    
-    if replay_id_filter:
-        print(f"🔍 Additional filter: Replay ID = {replay_id_filter}")
-    print(f"Analyzing card: '{card_name}'")
-    print(f"Cache: {'Enabled' if use_cache else 'Disabled'}")
-    print("=" * 50)
+    display_analysis_settings(replay_id_filter, card_name, use_cache)
     
     games_loaded = analyzer.load_all_games(use_cache=use_cache)
     

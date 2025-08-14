@@ -20,6 +20,7 @@ DRAFT_MUST_BE_ON = True
 # Additional filtering options
 PRELUDE_MUST_BE_ON = True
 MUST_INCLUDE_STARTING_HAND = True
+PLAYERS_ELO_OVER_300 = True  # Only include games where both players have ELO over 300
 
 # Card Summary CSV settings
 CARD_SUMMARY_OUTPUT_PREFIX = "card_summary"

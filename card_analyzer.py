@@ -1463,6 +1463,7 @@ class CardAnalyzer:
 
     def tfm_card_analyzer(self, card_name: str) -> Dict[str, Any]:
         """
+        ENTRY POINT OF THE ANALYZER
         Analyze complete history of a specific card across all games.
         
         Args:
@@ -1733,12 +1734,12 @@ class CardAnalyzer:
             
             # After processing all moves in the game, classify research_draft moves
             self._post_process_research_draft_moves(card_stats, game_moves)
-
-            # After processing all moves in the game, analyze draft-to-buy relationships
-            self._analyze_draft_to_buy_relationships(card_stats, game_draft_sequence, game_buy_moves, replay_id)
                         
             # Check for 2 draft moves close together (< 30 moves apart)
             self._handle_close_draft_moves(card_stats, game_moves, replay_id)
+
+            # After processing all moves in the game, analyze draft-to-buy relationships
+            self._analyze_draft_to_buy_relationships(card_stats, game_draft_sequence, game_buy_moves, replay_id)
             
             # Process game draw statistics using the new function
             self._process_game_draw_statistics(card_stats, game_moves, replay_id, last_draw_stats_key, last_draw_generation, card_in_starting_hand)
@@ -2074,11 +2075,11 @@ class CardAnalyzer:
         game_has_play_move = any(move['move_type'] == 'play' for move in game_moves)
 
         if game_with_card_besides_reveal:
-            card_stats['total_games_when_seen'] += 1
+            card_stats['total_games_when_seen'] += 1 # card was available to pick
         if game_has_any_draw_move:
-            card_stats['total_games_when_drawn_or_bought'] += 1
+            card_stats['total_games_when_drawn_or_bought'] += 1 # card was drawn or bought (including starting hand, when flag is set)
         if game_has_buy_move:
-            card_stats['total_games_when_bought_during_game'] += 1
+            card_stats['total_games_when_bought_during_game'] += 1 # card was bought during the game
         if game_has_play_move:
             card_stats['total_games_when_played'] += 1
             

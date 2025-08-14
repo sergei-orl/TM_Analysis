@@ -5,9 +5,7 @@ Uses the existing CardAnalyzer and TerraformingMarsAnalyzer classes.
 """
 
 import sys
-import time
-from tm_data_analyzer import TerraformingMarsAnalyzer
-from card_analyzer import CardAnalyzer
+from tm_data_analyzer import TerraformingMarsAnalyzer, display_analysis_settings
 
 # Import configuration
 try:
@@ -61,68 +59,20 @@ def main():
                 custom_cards = sys.argv[cards_index + 1].split(',')
                 cards_to_analyze = [card.strip() for card in custom_cards]
     
-    # Initialize analyzer with path from config
-    print("Starting Terraforming Mars Multi-Card Analysis")
-    print("=" * 60)
-    print(f"Filtering for: {REQUIRED_MAP} map, {REQUIRED_PLAYER_COUNT} players")
-    print(f"Colonies: {'OFF' if COLONIES_MUST_BE_OFF else 'ON'}")
-    print(f"Corporate Era: {'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}")
-    print(f"Draft: {'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
-    
-    # Display prelude filter if configured
-    print(f"Prelude: {'ON' if PRELUDE_MUST_BE_ON else 'OFF'}")
-    
-    # Display starting hand filter if configured
-    print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
-    
-    print(f"Cache: {'Enabled' if use_cache else 'Disabled'}")
+    # Display analysis settings using shared function
+    display_analysis_settings(use_cache=use_cache)
     print(f"Cards to analyze: {len(cards_to_analyze)}")
     print("=" * 60)
     
     analyzer = TerraformingMarsAnalyzer(DATA_DIRECTORY)
     
-    # Load all games (filtering happens during loading)
-    print("\nLoading games data...")
-    games_loaded = analyzer.load_all_games(use_cache=use_cache)
+    # Use shared function to analyze multiple cards
+    successful_analyses, failed_analyses = analyzer.analyze_multiple_cards(cards_to_analyze, use_cache)
     
-    if games_loaded == 0:
-        print("No games found matching criteria. Please check the data directory path in config.py")
+    # Check if any analysis was performed
+    if successful_analyses == 0 and failed_analyses == 0:
+        print("\n❌ No games loaded. Analysis could not proceed.")
         return
-    
-    print(f"✅ Loaded {games_loaded} filtered games")
-    
-    # Analyze each card one by one
-    print(f"\nStarting analysis of {len(cards_to_analyze)} cards...")
-    print("-" * 60)
-    
-    successful_analyses = 0
-    failed_analyses = 0
-    
-    for i, card_name in enumerate(cards_to_analyze, 1):
-        print(f"\n[{i}/{len(cards_to_analyze)}] {time.strftime('%H:%M:%S')} Analyzing card: '{card_name}'")
-        
-        try:
-            # Create a new CardAnalyzer instance for each card to ensure clean state
-            card_analyzer = CardAnalyzer(analyzer.games_data)
-            
-            # Analyze the card
-            card_stats = card_analyzer.save_card_analysis(card_name)
-            
-            if card_stats['total_games_analyzed'] > 0:
-                print(f"✅ Successfully analyzed '{card_name}': {card_stats['total_games_analyzed']} games")
-                successful_analyses += 1
-            else:
-                print(f"⚠️  No games found for card: '{card_name}'")
-                failed_analyses += 1
-                
-        except Exception as e:
-            print(f"❌ Error analyzing '{card_name}': {e}")
-            failed_analyses += 1
-        
-        # Add a small delay between analyses to avoid overwhelming the system
-        if i < len(cards_to_analyze):
-            print("Waiting 0.5 seconds before next analysis...")
-            time.sleep(0.5)
     
     # Summary
     print("\n" + "=" * 60)
