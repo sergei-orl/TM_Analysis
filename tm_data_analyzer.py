@@ -239,35 +239,31 @@ class TerraformingMarsAnalyzer:
                     continue
             
             # Check opponent ELO requirement
-            if PLAYERS_ELO_OVER_300:
+            if PLAYERS_ELO_OVER_THRESHOLD:
                 players = game_data.get('players', {})
-                
-                # Check if all players have ELO >= 300
+                all_players_above_threshold = True
+
                 for player_data in players.values():
-                    if isinstance(player_data, dict):
-                        elo_data = player_data.get('elo_data', {})
-                        
-                        # Check if elo_data exists and is a dict
-                        if not elo_data or not isinstance(elo_data, dict):
-                            break  # Exit player loop - this game is invalid
-                        
-                        # Get game_rank with sentinel value, check if it's the sentinel
-                        game_rank = elo_data.get('game_rank', 'MISSING')
-                        if game_rank == 'MISSING':
-                            break  # Exit player loop - this game is invalid
-                        
-                        # Convert to int and check threshold
-                        try:
-                            player_elo = int(game_rank)
-                            if player_elo < 300:
-                                break  # Exit player loop - this game is invalid
-                        except (ValueError, TypeError):
-                            # Exit player loop - this game has invalid ELO data
+                    if not isinstance(player_data, dict):
+                        all_players_above_threshold = False
+                        break
+
+                    elo_data = player_data.get('elo_data', {})
+                    if not isinstance(elo_data, dict):
+                        all_players_above_threshold = False
+                        break
+
+                    game_rank = elo_data.get('game_rank')
+                    try:
+                        if int(game_rank) < ELO_THRESHOLD:
+                            all_players_above_threshold = False
                             break
-                else:
-                    # Loop completed without break - ALL players passed the ELO check
-                    # Continue with this game
-                    pass
+                    except (ValueError, TypeError):
+                        all_players_above_threshold = False
+                        break
+
+                if not all_players_above_threshold:
+                    continue
             
             # Game passed all additional filters
             filtered_games.append(game_data)
@@ -386,9 +382,9 @@ def display_analysis_settings(replay_id_filter: str = None, card_name: str = Non
     print(f"Corporate Era: {'ON' if CORPORATE_ERA_MUST_BE_ON else 'OFF'}")
     print(f"Draft: {'ON' if DRAFT_MUST_BE_ON else 'OFF'}")
     
-    print(f"Prelude Required: {'ON' if PRELUDE_MUST_BE_ON else 'OFF'}")
+    print(f"Prelude Required: {'Yes' if PRELUDE_MUST_BE_ON else 'No'}")
     print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
-    print(f"Players ELO Over 300 Required: {'Yes' if PLAYERS_ELO_OVER_300 else 'No'}")
+    print(f"Players ELO Over 300 Required: {'Yes' if PLAYERS_ELO_OVER_THRESHOLD else 'No'}")
     
     if replay_id_filter:
         print(f"🔍 Additional filter: Replay ID = {replay_id_filter}")

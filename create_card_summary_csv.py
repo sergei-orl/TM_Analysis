@@ -37,6 +37,137 @@ VALUES_FILE_SUFFIX = '_values.csv'
 DICTS_FILE_SUFFIX = '_dicts.csv'
 INTERACTIONS_FILE_SUFFIX = '_interactions.csv'
 
+# Global field mapping - single source of truth for all CSV fields
+CSV_FIELD_MAPPING = {
+    # Basic card info
+    'basic_info': [
+        ('card_name', 'card_name'),
+        ('total_games_analyzed', 'total_games_analyzed'),
+        ('total_games_with_card', 'total_games_with_card'),
+        ('games_with_prelude', 'prelude_stats.games_with_prelude'),
+        ('drawn_count', 'drawn_count'),
+        ('played_count', 'played_count'),
+    ],
+    
+    # Win statistics and ELO gains by case (grouped)
+    'win_stats': [
+        ('win_rate_overall', 'win_rate_by_case.overall'),
+        ('elo_gain_overall', 'elo_metrics_by_case.overall.average_elo_gain'),
+        ('win_rate_when_seen', 'win_rate_by_case.when_seen'),
+        ('elo_gain_when_seen', 'elo_metrics_by_case.when_seen.average_elo_gain'),
+        ('win_rate_when_drawn', 'win_rate_by_case.when_drawn'),
+        ('elo_gain_when_drawn', 'elo_metrics_by_case.when_drawn.average_elo_gain'),
+        ('win_rate_when_bought_during_game', 'win_rate_by_case.when_bought_during_game'),
+        ('elo_gain_when_bought_during_game', 'elo_metrics_by_case.when_bought_during_game.average_elo_gain'),
+        ('win_rate_when_played', 'win_rate_by_case.when_played'),
+        ('elo_gain_when_played', 'elo_metrics_by_case.when_played.average_elo_gain'),
+    ],
+    
+    # Win counts by case
+    'win_counts': [
+        ('win_count_overall', 'win_count_by_case.overall'),
+        ('win_count_when_seen', 'win_count_by_case.when_seen'),
+        ('win_count_when_drawn', 'win_count_by_case.when_drawn'),
+        ('win_count_when_bought_during_game', 'win_count_by_case.when_bought_during_game'),
+        ('win_count_when_played', 'win_count_by_case.when_played'),
+    ],
+    
+    # Average ELO by case
+    'avg_elo': [
+        ('avg_elo_overall', 'elo_metrics_by_case.overall.average_elo'),
+        ('avg_elo_when_seen', 'elo_metrics_by_case.when_seen.average_elo'),
+        ('avg_elo_when_drawn', 'elo_metrics_by_case.when_drawn.average_elo'),
+        ('avg_elo_when_bought_during_game', 'elo_metrics_by_case.when_bought_during_game.average_elo'),
+        ('avg_elo_when_played', 'elo_metrics_by_case.when_played.average_elo'),
+    ],
+    
+    # Starting hand statistics
+    'starting_hand': [
+        ('play_to_keep_rate', 'starting_hand_stats.play_to_keep_rate'),
+        ('keep_rate', 'starting_hand_stats.keep_rate'),
+        ('kept_in_starting_hand', 'starting_hand_stats.kept_in_starting_hand'),
+        ('kept_and_played', 'starting_hand_stats.kept_and_played'),
+        ('kept_but_not_played', 'starting_hand_stats.kept_but_not_played'),
+    ],
+    
+    # Draft and buy statistics
+    'draft_buy': [
+        ('buy_to_draft_rate', 'draft_buy_stats.buy_to_draft_rate'),
+        ('buy_to_draft_1_rate', 'draft_buy_stats.buy_to_draft_1_rate'),
+        ('buy_to_draft_2_rate', 'draft_buy_stats.buy_to_draft_2_rate'),
+        ('buy_to_draft_3_rate', 'draft_buy_stats.buy_to_draft_3_rate'),
+        ('buy_to_draft_4_rate', 'draft_buy_stats.buy_to_draft_4_rate'),
+        ('draft_1_buys', 'draft_buy_stats.draft_1_buys'),
+        ('draft_2_buys', 'draft_buy_stats.draft_2_buys'),
+        ('draft_3_buys', 'draft_buy_stats.draft_3_buys'),
+        ('draft_4_buys', 'draft_buy_stats.draft_4_buys'),
+    ],
+    
+    # Play rate statistics
+    'play_rates': [
+        ('play_to_buy_during_game_rate', 'play_rate_stats.play_to_buy_during_game_rate'),
+        ('play_to_buy_overall_rate', 'play_rate_stats.play_to_buy_overall_rate'),
+        ('play_to_draw_for_free_rate', 'play_rate_stats.play_to_draw_for_free_rate'),
+        ('play_per_option_rate', 'play_rate_stats.play_per_option_rate'),
+        ('play_per_card_in_hand_rate', 'play_rate_stats.play_per_card_in_hand_rate'),
+        ('plays_when_bought_during_game', 'play_rate_stats.plays_when_bought_during_game'),
+        ('plays_when_bought_overall', 'play_rate_stats.plays_when_bought_overall'),
+        ('plays_when_drawn_for_free', 'play_rate_stats.plays_when_drawn_for_free'),
+        ('plays_when_card_was_keepable', 'play_rate_stats.plays_when_card_was_keepable'),
+        ('plays_when_card_was_in_hand', 'play_rate_stats.plays_when_card_was_in_hand'),
+    ],
+    
+    # Keep rates and other rates
+    'keep_rates': [
+        ('business_contacts_keep_rate', 'keep_rates.business_contacts_keep_rate'),
+        ('business_network_buy_rate', 'keep_rates.business_network_buy_rate'),
+        ('invention_contest_keep_rate', 'keep_rates.invention_contest_keep_rate'),
+        ('inventors_guild_buy_rate', 'keep_rates.inventors_guild_buy_rate'),
+        ('draft_1_rate', 'keep_rates.draft_1_rate'),
+        ('draft_3_rate', 'keep_rates.draft_3_rate'),
+        ('card_buy_through_card_rate', 'keep_rates.card_buy_through_card_rate'),
+    ]
+}
+
+def get_nested_value(data: Dict[str, Any], path: str, default=None):
+    """
+    Get a nested value from a dictionary using dot notation.
+    
+    Args:
+        data: Dictionary to search in
+        path: Dot-separated path (e.g., 'prelude_stats.games_with_prelude')
+        default: Default value if path not found
+        
+    Returns:
+        Value at the path or default
+    """
+    keys = path.split('.')
+    current = data
+    
+    for key in keys:
+        if isinstance(current, dict) and key in current:
+            current = current[key]
+        else:
+            return default
+    
+    return current
+
+def create_values_csv_headers() -> List[str]:
+    """
+    Create the complete list of CSV headers for the values CSV.
+    
+    Returns:
+        List of CSV column headers
+    """
+    headers = []
+    
+    # Flatten all field mappings into a single list
+    for section_name, field_mappings in CSV_FIELD_MAPPING.items():
+        for csv_header, _ in field_mappings:
+            headers.append(csv_header)
+    
+    return headers
+
 def load_all_card_analyses(analysis_dir: str = None) -> List[Dict[str, Any]]:
     """
     Load all card analysis JSON files from the analysis directory.
@@ -113,94 +244,6 @@ def collect_all_unique_fields(card_analyses: List[Dict[str, Any]]) -> Dict[str, 
     
     return unique_fields
 
-def create_values_csv_headers(unique_fields: Dict[str, Set[str]]) -> List[str]:
-    """
-    Create the complete list of CSV headers for the values CSV.
-    
-    Args:
-        unique_fields: Dictionary of unique field values
-        
-    Returns:
-        List of CSV column headers
-    """
-    headers = [
-        # Basic card info
-        'card_name',
-        'total_games_analyzed',
-        'total_games_with_card',
-        'games_with_prelude',
-        'drawn_count',
-        'played_count',
-        
-        # Win statistics and ELO gains by case (grouped)
-        'win_rate_overall',
-        'elo_gain_overall',
-        'win_rate_when_seen',
-        'elo_gain_when_seen',
-        'win_rate_when_drawn',
-        'elo_gain_when_drawn',
-        'win_rate_when_bought_during_game',
-        'elo_gain_when_bought_during_game',
-        'win_rate_when_played',
-        'elo_gain_when_played',
-        
-        # Win counts by case
-        'win_count_overall',
-        'win_count_when_seen',
-        'win_count_when_drawn',
-        'win_count_when_bought_during_game',
-        'win_count_when_played',
-        
-        # Average ELO by case
-        'avg_elo_overall',
-        'avg_elo_when_seen',
-        'avg_elo_when_drawn',
-        'avg_elo_when_bought_during_game',
-        'avg_elo_when_played',
-        
-        # Starting hand statistics (rates first, then counts)
-        'play_to_keep_rate',
-        'keep_rate',
-        'kept_in_starting_hand',
-        'kept_and_played',
-        'kept_but_not_played',
-        
-        # Draft and buy statistics (rates first, then counts)
-        'buy_to_draft_rate',
-        'buy_to_draft_1_rate',
-        'buy_to_draft_2_rate',
-        'buy_to_draft_3_rate',
-        'buy_to_draft_4_rate',
-        'draft_1_buys',
-        'draft_2_buys',
-        'draft_3_buys',
-        'draft_4_buys',
-        
-        # Play rate statistics
-        'play_to_buy_during_game_rate',
-        'play_to_buy_overall_rate',
-        'play_to_draw_rate',
-        'plays_when_bought_during_game',
-        'plays_when_bought_overall',
-        'plays_when_drawn',
-        
-        # Keep rates and other rates
-        'business_contacts_keep_rate',
-        'business_network_buy_rate',
-        'invention_contest_keep_rate',
-        'inventors_guild_buy_rate',
-        'draft_1_rate',
-        'draft_3_rate',
-        'card_buy_through_card_rate',
-        
-        # Payment statistics
-        'min_payment',
-        'max_payment',
-        'avg_payment',
-    ]
-    
-    return headers
-
 def create_interactions_csv_headers(unique_fields: Dict[str, Set[str]]) -> List[str]:
     """
     Create the complete list of CSV headers for the interactions CSV.
@@ -276,6 +319,47 @@ def _sort_gen_pair_key(gen_pair: str) -> tuple:
         return (999, played)  # Large number to put zeros at the end
     return (drawn, played)
 
+def _sort_payment_tuple_key(payment_key: str) -> tuple:
+    """
+    Sort payment tuple keys by sum of numbers, then by first number.
+    
+    Examples of sorting order:
+    (1,) -> (1, 1)     # sum=1, first=1
+    (1,2) -> (3, 1)    # sum=3, first=1  
+    (3,) -> (3, 3)     # sum=3, first=3
+    (3,4) -> (7, 3)    # sum=7, first=3
+    (6,1) -> (7, 6)    # sum=7, first=6
+    (11) -> (11, 11)   # sum=11, first=11
+    (12,1) -> (13, 12) # sum=13, first=12
+    
+    Args:
+        payment_key: Payment key string like "(1,2)" or "(3,)"
+        
+    Returns:
+        Tuple for sorting (sum, first_number)
+    """
+    # Remove parentheses and split by comma
+    payment_key = payment_key.strip('()')
+    if not payment_key:  # Empty tuple
+        return (0, 0)
+    
+    parts = payment_key.split(',')
+    # Convert to integers, handle empty parts
+    numbers = []
+    for part in parts:
+        part = part.strip()
+        if part:  # Only add non-empty parts
+            try:
+                numbers.append(int(part))
+            except ValueError:
+                numbers.append(0)
+    
+    if not numbers:  # No valid numbers
+        return (0, 0)
+    
+    # Return (sum, first_number) for sorting
+    return (sum(numbers), numbers[0])
+
 def _sort_dict_by_keys(data_dict: dict, key_type: str = 'numeric') -> dict:
     """
     Sort a dictionary by its keys based on the specified key type.
@@ -299,6 +383,9 @@ def _sort_dict_by_keys(data_dict: dict, key_type: str = 'numeric') -> dict:
     elif key_type == 'gen_pair':
         # Sort generation pair keys
         return dict(sorted(data_dict.items(), key=lambda x: _sort_gen_pair_key(x[0])))
+    elif key_type == 'payment_tuple':
+        # Sort payment tuple keys by sum, then by first number
+        return dict(sorted(data_dict.items(), key=lambda x: _sort_payment_tuple_key(x[0])))
     else:
         # Default string sorting
         return dict(sorted(data_dict.items()))
@@ -326,114 +413,25 @@ def create_dicts_csv_headers() -> List[str]:
     
     return headers
 
-def extract_values_row(card: Dict[str, Any], unique_fields: Dict[str, Set[str]]) -> List[Any]:
+def extract_values_row(card: Dict[str, Any]) -> List[Any]:
     """
     Extract a single row of data from a card analysis for the values CSV.
+    Uses the centralized CSV_FIELD_MAPPING for maintainability.
     
     Args:
         card: Card analysis dictionary
-        unique_fields: Dictionary of unique field values
         
     Returns:
         List of values for the CSV row
     """
     row = []
     
-    # Basic card info
-    row.append(card.get('card_name', ''))
-    row.append(card.get('total_games_analyzed', 0))
-    row.append(card.get('total_games_with_card', 0))
-    
-    # Prelude games count
-    prelude_stats = card.get('prelude_stats', {})
-    row.append(prelude_stats.get('games_with_prelude', 0))
-    
-    # Draw and play counts
-    row.append(card.get('drawn_count', 0))
-    row.append(card.get('played_count', 0))
-    
-    # Win statistics and ELO gains by case (grouped)
-    win_count_by_case = card.get('win_count_by_case', {})
-    win_rate_by_case = card.get('win_rate_by_case', {})
-    elo_metrics_by_case = card.get('elo_metrics_by_case', {})
-    
-    # Group 1: Overall
-    row.append(win_rate_by_case.get('overall', 0))
-    row.append(elo_metrics_by_case.get('overall', {}).get('average_elo_gain', 0))
-    
-    # Group 2: When seen
-    row.append(win_rate_by_case.get('when_seen', 0))
-    row.append(elo_metrics_by_case.get('when_seen', {}).get('average_elo_gain', 0))
-    
-    # Group 3: When drawn
-    row.append(win_rate_by_case.get('when_drawn', 0))
-    row.append(elo_metrics_by_case.get('when_drawn', {}).get('average_elo_gain', 0))
-    
-    # Group 4: When bought during game
-    row.append(win_rate_by_case.get('when_bought_during_game', 0))
-    row.append(elo_metrics_by_case.get('when_bought_during_game', {}).get('average_elo_gain', 0))
-    
-    # Group 5: When played
-    row.append(win_rate_by_case.get('when_played', 0))
-    row.append(elo_metrics_by_case.get('when_played', {}).get('average_elo_gain', 0))
-    
-    # Win counts by case
-    row.append(win_count_by_case.get('overall', 0))
-    row.append(win_count_by_case.get('when_seen', 0))
-    row.append(win_count_by_case.get('when_drawn', 0))
-    row.append(win_count_by_case.get('when_bought_during_game', 0))
-    row.append(win_count_by_case.get('when_played', 0))
-    
-    # Average ELO by case
-    row.append(elo_metrics_by_case.get('overall', {}).get('average_elo', 0))
-    row.append(elo_metrics_by_case.get('when_seen', {}).get('average_elo', 0))
-    row.append(elo_metrics_by_case.get('when_drawn', {}).get('average_elo', 0))
-    row.append(elo_metrics_by_case.get('when_bought_during_game', {}).get('average_elo', 0))
-    row.append(elo_metrics_by_case.get('when_played', {}).get('average_elo', 0))
-    
-    # Starting hand statistics (rates first, then counts)
-    starting_hand_stats = card.get('starting_hand_stats', {})
-    row.append(starting_hand_stats.get('play_to_keep_rate', 0))
-    row.append(starting_hand_stats.get('keep_rate', 0))
-    row.append(starting_hand_stats.get('kept_in_starting_hand', 0))
-    row.append(starting_hand_stats.get('kept_and_played', 0))
-    row.append(starting_hand_stats.get('kept_but_not_played', 0))
-    
-    # Draft and buy statistics (rates first, then counts)
-    draft_buy_stats = card.get('draft_buy_stats', {})
-    row.append(draft_buy_stats.get('buy_to_draft_rate', 0))
-    row.append(draft_buy_stats.get('buy_to_draft_1_rate', 0))
-    row.append(draft_buy_stats.get('buy_to_draft_2_rate', 0))
-    row.append(draft_buy_stats.get('buy_to_draft_3_rate', 0))
-    row.append(draft_buy_stats.get('buy_to_draft_4_rate', 0))
-    row.append(draft_buy_stats.get('draft_1_buys', 0))
-    row.append(draft_buy_stats.get('draft_2_buys', 0))
-    row.append(draft_buy_stats.get('draft_3_buys', 0))
-    row.append(draft_buy_stats.get('draft_4_buys', 0))
-    
-    # Play rate statistics
-    play_rate_stats = card.get('play_rate_stats', {})
-    row.append(play_rate_stats.get('play_to_buy_during_game_rate', 0))
-    row.append(play_rate_stats.get('play_to_buy_overall_rate', 0))
-    row.append(play_rate_stats.get('play_to_draw_rate', 0))
-    row.append(play_rate_stats.get('plays_when_bought_during_game', 0))
-    row.append(play_rate_stats.get('plays_when_bought_overall', 0))
-    row.append(play_rate_stats.get('plays_when_drawn', 0))
-    
-    # Keep rates and other rates
-    row.append(card.get('keep_rates', {}).get('business_contacts_keep_rate', 0))
-    row.append(card.get('keep_rates', {}).get('business_network_buy_rate', 0))
-    row.append(card.get('keep_rates', {}).get('invention_contest_keep_rate', 0))
-    row.append(card.get('keep_rates', {}).get('inventors_guild_buy_rate', 0))
-    row.append(card.get('keep_rates', {}).get('draft_1_rate', 0))
-    row.append(card.get('keep_rates', {}).get('draft_3_rate', 0))
-    row.append(card.get('keep_rates', {}).get('card_buy_through_card_rate', 0))
-    
-    # Payment statistics
-    payment_stats = card.get('payment_stats', {})
-    row.append(payment_stats.get('min_payment', 0))
-    row.append(payment_stats.get('max_payment', 0))
-    row.append(payment_stats.get('avg_payment', 0))
+    # Process each section of the field mapping
+    for section_name, field_mappings in CSV_FIELD_MAPPING.items():
+        for csv_header, data_path in field_mappings:
+            # Use the helper function to get nested values
+            value = get_nested_value(card, data_path, 0)
+            row.append(value)
     
     return row
 
@@ -498,10 +496,11 @@ def extract_dicts_row(card: Dict[str, Any]) -> List[Any]:
     row.append(json.dumps(_sort_dict_by_keys(card.get('drawn_not_played_by_gen', {}), 'numeric')))
     row.append(json.dumps(_sort_dict_by_keys(card.get('player_corporations', {}), 'string')))
     
-    # Payment distribution dictionary - sorted by payment amount
-    payment_stats = card.get('payment_stats', {})
-    payment_dist = payment_stats.get('payment_distribution', {})
-    row.append(json.dumps(_sort_dict_by_keys(payment_dist, 'numeric')))
+    # Payment distribution dictionary - sorted by payment combination
+    payment_dist = card.get('payment_distribution', {})
+    # Convert tuple keys to strings for JSON serialization
+    payment_dist_str = {str(k): v for k, v in payment_dist.items()}
+    row.append(json.dumps(_sort_dict_by_keys(payment_dist_str, 'payment_tuple')))
     
     return row
 
@@ -526,7 +525,7 @@ def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None
     unique_fields = collect_all_unique_fields(card_analyses)
     
     # Create CSV headers
-    values_headers = create_values_csv_headers(unique_fields)
+    values_headers = create_values_csv_headers()
     dicts_headers = create_dicts_csv_headers()
     interactions_headers = create_interactions_csv_headers(unique_fields)
     
@@ -545,7 +544,7 @@ def create_card_summary_csvs(output_prefix: str = None, analysis_dir: str = None
         
         # Write data rows
         for i, card in enumerate(card_analyses):
-            row = extract_values_row(card, unique_fields)
+            row = extract_values_row(card)
             writer.writerow(row)
             
             if (i + 1) % 100 == 0:

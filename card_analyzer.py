@@ -79,7 +79,7 @@ class CardAnalyzer:
             'played_count': 0,
             'kept_and_played': 0,
             'kept_but_not_played': 0,
-            'payment_amounts': Counter(),  # Use Counter instead of list
+            'payment_amounts': [],  # List of payment amount lists for each play
             'draw_methods': Counter(),  # Track frequency of each draw method
             'seen_methods': Counter(),  # Track frequency of each seen method
             'other_stats': Counter(),  # Track frequency of other types
@@ -132,7 +132,7 @@ class CardAnalyzer:
             'player_corporations': Counter(),  # Track corporations used by player_perspective
             # New fields for different win percentage calculations
             'total_games_when_seen': 0,  # Games where card was seen (excluding reveal moves)
-            'total_games_when_drawn_or_bought': 0,  # Games where card was drawn
+            'total_games_when_with_card_in_hand': 0,  # Games where card was drawn
             'total_games_when_bought_during_game': 0,  # Games where card was bought during game
             'total_games_when_played': 0,  # Games where card was played
             'win_count_when_seen': 0,  # Wins when card was seen
@@ -162,11 +162,15 @@ class CardAnalyzer:
             # New play rate tracking
             'play_to_buy_during_game_rate': 0,  # Play rate when card was bought during game
             'play_to_buy_overall_rate': 0,  # Play rate when card was bought (during game + starting hand)
-            'play_to_draw_rate': 0,  # Play rate when card was drawn (excluding buy methods and starting hand)
+            'play_to_draw_for_free_rate': 0,  # Play rate when card was drawn (excluding buy methods and starting hand)
+            'play_per_option_rate': 0,  # Play rate when card was seen (option to pick)
+            'play_per_card_in_hand_rate': 0,  # Play rate when card was drawn (in hand)
             # Track plays under each condition separately
             'plays_when_bought_during_game': 0,  # Plays in games where card was bought during game
             'plays_when_bought_overall': 0,  # Plays in games where card was bought (during game + starting hand)
-            'plays_when_drawn': 0,  # Plays in games where card was drawn (excluding buy methods and starting hand)
+            'plays_when_drawn_for_free': 0,  # Plays in games where card was drawn (excluding buy methods and starting hand)
+            'plays_when_card_was_keepable': 0,  # Plays in games where card was keepable
+            'plays_when_card_was_in_hand': 0,  # Plays in games where card was in hand
             # Separate ELO tracking for each case - allows us to calculate average ELO gains and ratings
             # for different scenarios (when card was seen, drawn, bought, played, and by prelude status)
             'elo_values_when_seen': [],  # ELO values when card was seen
@@ -980,14 +984,24 @@ class CardAnalyzer:
         
         # Calculate payment statistics
         if card_stats['payment_amounts']:
-            card_stats['payment_stats'] = {
-                'min_payment': min(card_stats['payment_amounts'].keys()),
-                'max_payment': max(card_stats['payment_amounts'].keys()),
-                'avg_payment': round(sum(k * v for k, v in card_stats['payment_amounts'].items()) / sum(card_stats['payment_amounts'].values()), 4),
-                'payment_distribution': dict(sorted(card_stats['payment_amounts'].items()))
-            }
+            # Count the frequency of each payment combination
+            payment_combinations = Counter()
+            for payment_list in card_stats['payment_amounts']:
+                # Convert list to tuple for hashing (Counter requires hashable keys)
+                payment_tuple = tuple(payment_list)
+                payment_combinations[payment_tuple] += 1
+            
+            # Convert tuple keys to strings for reliable sorting and JSON compatibility
+            payment_distribution = {}
+            for payment_tuple, count in payment_combinations.items():
+                payment_key = str(payment_tuple)
+                payment_distribution[payment_key] = count
+            
+            card_stats['payment_distribution'] = dict(sorted(payment_distribution.items()))
+        else:
+            card_stats['payment_distribution'] = {}
         
-        # Remove the payment amounts counter, keep only the stats
+        # Remove the payment amounts list, keep only the distribution
         if 'payment_amounts' in card_stats:
             del card_stats['payment_amounts']
         
@@ -1093,7 +1107,7 @@ class CardAnalyzer:
         else:
             card_stats['buy_to_draft_4_rate'] = 0
         
-        # Calculate new play rate ratios
+        # Calculate play rate ratios
         # Play to buy during game rate
         if card_stats['total_games_when_bought_during_game'] > 0:
             card_stats['play_to_buy_during_game_rate'] = round(card_stats['plays_when_bought_during_game'] / card_stats['total_games_when_bought_during_game'], 4)
@@ -1115,9 +1129,21 @@ class CardAnalyzer:
                 draw_games_count += count
         
         if draw_games_count > 0:
-            card_stats['play_to_draw_rate'] = round(card_stats['plays_when_drawn'] / draw_games_count, 4)
+            card_stats['play_to_draw_for_free_rate'] = round(card_stats['plays_when_drawn_for_free'] / draw_games_count, 4)
         else:
-            card_stats['play_to_draw_rate'] = 0
+            card_stats['play_to_draw_for_free_rate'] = 0
+        
+        # Play per option rate (when card was seen)
+        if card_stats['total_games_when_seen'] > 0:
+            card_stats['play_per_option_rate'] = round(card_stats['total_games_when_played'] / card_stats['total_games_when_seen'], 4)
+        else:
+            card_stats['play_per_option_rate'] = 0
+        
+        # Play per card in hand rate (when card was drawn)
+        if card_stats['total_games_when_with_card_in_hand'] > 0:
+            card_stats['play_per_card_in_hand_rate'] = round(card_stats['total_games_when_played'] / card_stats['total_games_when_with_card_in_hand'], 4)
+        else:
+            card_stats['play_per_card_in_hand_rate'] = 0
         
         # Check for multiple draws
         card_stats['multiple_draws_replay_ids'] = list(card_stats['multiple_draws_games'].keys())
@@ -1157,7 +1183,7 @@ class CardAnalyzer:
             percentage_fields = {
                 'win_rate_overall': ('win_count', 'total_games_with_card'),
                 'win_rate_when_seen': ('win_count_when_seen', 'total_games_when_seen'),
-                'win_rate_when_drawn': ('win_count_when_drawn', 'total_games_when_drawn_or_bought'),
+                'win_rate_when_drawn': ('win_count_when_drawn', 'total_games_when_with_card_in_hand'),
                 'win_rate_when_bought_during_game': ('win_count_when_bought_during_game', 'total_games_when_bought_during_game'),
                 'win_rate_when_played': ('win_count_when_played', 'total_games_when_played'),
                 'win_rate_with_prelude': ('wins_with_prelude', 'games_with_prelude'),
@@ -1277,15 +1303,19 @@ class CardAnalyzer:
             'play_rate_stats': {
                 'play_to_buy_during_game_rate': card_stats['play_to_buy_during_game_rate'],
                 'play_to_buy_overall_rate': card_stats['play_to_buy_overall_rate'],
-                'play_to_draw_rate': card_stats['play_to_draw_rate'],
+                'play_to_draw_for_free_rate': card_stats['play_to_draw_for_free_rate'],
+                'play_per_option_rate': card_stats['play_per_option_rate'],
+                'play_per_card_in_hand_rate': card_stats['play_per_card_in_hand_rate'],
                 'plays_when_bought_during_game': card_stats['plays_when_bought_during_game'],
                 'plays_when_bought_overall': card_stats['plays_when_bought_overall'],
-                'plays_when_drawn': card_stats['plays_when_drawn']
+                'plays_when_drawn_for_free': card_stats['plays_when_drawn_for_free'],
+                'plays_when_card_was_keepable': card_stats['plays_when_card_was_keepable'],
+                'plays_when_card_was_in_hand': card_stats['plays_when_card_was_in_hand']
             },
             'keep_rates': card_stats.get('keep_rates', {}),
             'draw_methods': card_stats['draw_methods'],
             'seen_methods': card_stats['seen_methods'],
-            'payment_stats': card_stats.get('payment_stats', {}),
+            'payment_distribution': card_stats.get('payment_distribution', {}),
             'other_stats': card_stats['other_stats'],
             'elo_gains': {
                 '-19 and down': card_stats['elo_gains']['-19 and down'],
@@ -1748,7 +1778,8 @@ class CardAnalyzer:
             if any(not move['move_type'].startswith('other') for move in game_moves):  # Check for actual moves with this card
                 
                 card_stats['total_games_with_card'] += 1
-                card_stats['game_moves_by_card'][replay_id] = game_moves
+                game_key = f"{replay_id}_{player_perspective}"
+                card_stats['game_moves_by_card'][game_key] = game_moves
                 # Track game types and plays using the new function
                 game_with_card_besides_reveal, game_has_any_draw_move, game_has_buy_move, game_has_play_move = self._track_game_types_and_plays(
                     card_stats, game_moves, kept_in_hand, card_in_starting_hand)
@@ -1951,27 +1982,32 @@ class CardAnalyzer:
                 if original_draft_type in card_stats['seen_methods']:
                     card_stats['seen_methods'][original_draft_type] -= 1
 
-    def _process_play_payment(self, description: str, card_stats: Dict[str, Any]) -> int:
+    def _process_play_payment(self, description: str, card_stats: Dict[str, Any]) -> list:
         """
         Process payment information for a play move.
+        Captures all payment amounts (there can be multiple "pays X" instances).
         
         Args:
             description: Current move description
             card_stats: Card statistics dictionary to update
             
         Returns:
-            The payment amount
+            List of payment amounts found
         """
-        payment_match = re.search(r'pays (\d+)', description)
-        if payment_match:
-            paid_amount = int(payment_match.group(1))
-            card_stats['payment_amounts'][paid_amount] += 1
-        else:
-            # No payment found - this is a free play (count as 0)
-            paid_amount = 0
-            card_stats['payment_amounts'][0] += 1
+        # Find all payment amounts in the description
+        payment_matches = re.findall(r'pays (\d+)', description)
         
-        return paid_amount
+        if payment_matches:
+            # Convert to integers and preserve original order
+            paid_amounts = [int(amount) for amount in payment_matches]
+            # Store the list of payment amounts
+            card_stats['payment_amounts'].append(paid_amounts)
+        else:
+            # No payment found - this is a free play (count as empty list)
+            paid_amounts = []
+            card_stats['payment_amounts'].append(paid_amounts)
+        
+        return paid_amounts
 
     def _classify_other_move_type(self, description: str, action_type: str, next_description: str, next_2_description: str, card_name: str, oponnent_name: str) -> str:
         """
@@ -2077,7 +2113,7 @@ class CardAnalyzer:
         if game_with_card_besides_reveal:
             card_stats['total_games_when_seen'] += 1 # card was available to pick
         if game_has_any_draw_move:
-            card_stats['total_games_when_drawn_or_bought'] += 1 # card was drawn or bought (including starting hand, when flag is set)
+            card_stats['total_games_when_with_card_in_hand'] += 1 # card was drawn or bought (including starting hand, when flag is set)
         if game_has_buy_move:
             card_stats['total_games_when_bought_during_game'] += 1 # card was bought during the game
         if game_has_play_move:
@@ -2089,7 +2125,11 @@ class CardAnalyzer:
         if (game_has_buy_move or kept_in_hand) and game_has_play_move:
             card_stats['plays_when_bought_overall'] += 1
         if game_has_draw_no_buy_move and game_has_play_move:
-            card_stats['plays_when_drawn'] += 1
+            card_stats['plays_when_drawn_for_free'] += 1
+        if game_with_card_besides_reveal and game_has_play_move:
+            card_stats['plays_when_card_was_keepable'] += 1
+        if game_has_any_draw_move and game_has_play_move:
+            card_stats['plays_when_card_was_in_hand'] += 1
             
         return game_with_card_besides_reveal, game_has_any_draw_move, game_has_buy_move, game_has_play_move
 
