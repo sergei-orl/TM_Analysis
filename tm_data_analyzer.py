@@ -16,6 +16,12 @@ except ImportError:
     print("Please copy 'config_template.py' to 'config.py' and update the paths.")
     sys.exit(1)
 
+# Games that should be skipped (hardcoded skips)
+SKIPPED_GAMES = [
+    "603866588",
+    "521063871"
+]
+
 class TerraformingMarsAnalyzer:
     """
     Analyzer for Terraforming Mars game data stored in JSON format.
@@ -34,7 +40,17 @@ class TerraformingMarsAnalyzer:
         self.cache_file = Path("analysis_output/processed_games_cache.pkl")
         self.cache_hash_file = Path("analysis_output/cache_hash.txt")
         self.replay_id_filter = None
+        self._processed_games = set()  # Track processed games to avoid duplicates
         
+        # Statistics for corrections made during loading
+        self._corrections_made = {
+            'player_perspective_corrected': 0,
+            'winner_corrected': 0,
+            'games_skipped_invalid_elo': 0,
+            'games_skipped_duplicates': 0,
+            'games_skipped_hardcoded': 0
+        }
+    
     def _get_directory_hash(self) -> str:
         """
         Generate a hash of the data directory to detect changes.
@@ -60,6 +76,118 @@ class TerraformingMarsAnalyzer:
             hash_md5.update(info.encode('utf-8'))
         
         return hash_md5.hexdigest()
+    
+    def _correct_player_perspective(self, moves: list, original_player_perspective: str) -> tuple[str, bool]:
+        """
+        Detect and correct player perspective based on "You choose corporation" move.
+        
+        Args:
+            moves: List of moves for the game
+            original_player_perspective: Original player perspective ID
+            
+        Returns:
+            Tuple of (corrected_player_perspective, was_corrected)
+        """
+        for move in moves:
+            if not isinstance(move, dict):
+                continue
+            
+            description = move.get('description', '')
+            player_id = move.get('player_id', '')
+            
+            if "You choose corporation" in description:
+                if player_id != original_player_perspective:
+                    return player_id, True
+                else:
+                    return original_player_perspective, False
+        
+        # No "You choose corporation" found, keep original
+        return original_player_perspective, False
+    
+    def _correct_winner(self, game_data: Dict) -> tuple[str, bool]:
+        """
+        Correct the winner based on ELO data if there's a mismatch.
+        
+        Args:
+            game_data: Game data dictionary
+            
+        Returns:
+            Tuple of (corrected_winner, was_corrected)
+        """
+        winner = game_data.get('winner', 'unknown')
+        players = game_data.get('players', {})
+        
+        # Find elo_gainer and elo_loser
+        elo_gainer = 'unknown'
+        elo_loser = 'unknown'
+        
+        for player_id, player_data in players.items():
+            if not isinstance(player_data, dict):
+                continue
+                
+            player_name = player_data.get('player_name', 'unknown')
+            elo_data = player_data.get('elo_data')
+            
+            if elo_data and isinstance(elo_data, dict):
+                game_rank_change = elo_data.get('game_rank_change', 0)
+                if game_rank_change is not None and isinstance(game_rank_change, (int, float)):
+                    if game_rank_change > 0:
+                        elo_gainer = player_name
+                    elif game_rank_change < 0:
+                        elo_loser = player_name
+        
+        # Correct winner if needed: if elo_gainer != winner and elo_loser == winner, rewrite winner
+        if elo_gainer != 'unknown' and elo_gainer != winner and elo_loser == winner:
+            return elo_gainer, True
+        
+        return winner, False
+    
+    def _has_valid_elo_data(self, game_data: Dict) -> bool:
+        """
+        Check if a game has valid ELO data for all players.
+        
+        Args:
+            game_data: Game data dictionary
+            
+        Returns:
+            True if all players have valid ELO data, False otherwise
+        """
+        players = game_data.get('players', {})
+        
+        for player_data in players.values():
+            if not isinstance(player_data, dict):
+                return False
+                
+            elo_data = player_data.get('elo_data')
+            if not isinstance(elo_data, dict):
+                return False
+                
+            game_rank_change = elo_data.get('game_rank_change', 0)
+            if game_rank_change is None or not isinstance(game_rank_change, (int, float)):
+                return False
+        
+        return True
+    
+    def _check_and_track_duplicate_game(self, replay_id: str, player_perspective: str) -> bool:
+        """
+        Check if a game has already been processed and track it if it's a duplicate.
+        
+        Args:
+            replay_id: The replay ID of the game
+            player_perspective: The player perspective ID
+            
+        Returns:
+            True if this is a duplicate game, False otherwise
+        """
+        game_key = f"{replay_id}_{player_perspective}"
+        if hasattr(self, '_processed_games') and game_key in self._processed_games:
+            return True
+        else:
+            # Mark this game as processed
+            if not hasattr(self, '_processed_games'):
+                self._processed_games = set()
+            self._processed_games.add(game_key)
+            return False
     
     def _find_replay_files(self, replay_id: str) -> list:
         """
@@ -148,12 +276,12 @@ class TerraformingMarsAnalyzer:
         
         # Try to load from cache first (only if no replay filter is set)
         if use_cache and not self.replay_id_filter and self._load_from_cache():
-            # Apply Prelude and Starting Hand filters to cached data
+            # Apply ALL filters and corrections to cached data (not just additional filters)
             initial_count = len(self.games_data)
-            self._apply_additional_filters_to_cached_data()
+            self._apply_all_filters_and_corrections_to_cached_data()
             final_count = len(self.games_data)
             if initial_count != final_count:
-                print(f"Applied additional filters: {initial_count} → {final_count} games")
+                print(f"Applied all filters and corrections: {initial_count} → {final_count} games")
             return len(self.games_data)
         
         # If replay ID filter is set, search for specific file first
@@ -207,7 +335,29 @@ class TerraformingMarsAnalyzer:
         if use_cache and filtered_games > 0 and not self.replay_id_filter:
             self._save_to_cache()
         
+        # Display correction statistics
+        self._display_correction_statistics()
+        
         return len(self.games_data)
+    
+    def _display_correction_statistics(self):
+        """
+        Display statistics about corrections and filtering made during data loading.
+        """
+        if any(count > 0 for count in self._corrections_made.values()):
+            print("\n📊 Data Loading Corrections and Filtering:")
+            if self._corrections_made['player_perspective_corrected'] > 0:
+                print(f"  ✅ Player perspective corrected: {self._corrections_made['player_perspective_corrected']} games")
+            if self._corrections_made['winner_corrected'] > 0:
+                print(f"  ✅ Winner corrected: {self._corrections_made['winner_corrected']} games")
+            if self._corrections_made['games_skipped_invalid_elo'] > 0:
+                print(f"  ⚠️  Games skipped (invalid ELO): {self._corrections_made['games_skipped_invalid_elo']} games")
+            if self._corrections_made['games_skipped_duplicates'] > 0:
+                print(f"  ⚠️  Games skipped (duplicates): {self._corrections_made['games_skipped_duplicates']} games")
+            if self._corrections_made['games_skipped_hardcoded'] > 0:
+                print(f"  ⚠️  Games skipped (hardcoded): {self._corrections_made['games_skipped_hardcoded']} games")
+        else:
+            print("\n✅ No corrections or filtering needed during data loading")
 
     def _apply_additional_filters_to_cached_data(self):
         """
@@ -217,10 +367,23 @@ class TerraformingMarsAnalyzer:
         if not self.games_data:
             return
         
+        print(f"Applying additional filters to {len(self.games_data)} cached games...")
+        
         # Filter out games that don't match additional criteria
         filtered_games = []
         
-        for game_data in self.games_data:
+        for game_data in tqdm(self.games_data, desc="Filtering cached games", unit="game"):
+            # Skip games that are in the SKIPPED_GAMES list
+            replay_id = game_data.get('replay_id', '')
+            if replay_id in SKIPPED_GAMES:
+                self._corrections_made['games_skipped_hardcoded'] += 1
+                continue
+            
+            # Check if game has valid ELO data for all players
+            if not self._has_valid_elo_data(game_data):
+                self._corrections_made['games_skipped_invalid_elo'] += 1
+                continue
+            
             # Check prelude setting
             if PRELUDE_MUST_BE_ON:
                 if not game_data.get('prelude_on', False):
@@ -271,21 +434,126 @@ class TerraformingMarsAnalyzer:
         # Update the games data
         self.games_data = filtered_games
 
+    def _apply_all_filters_and_corrections_to_cached_data(self):
+        """
+        Apply all filters and corrections to already loaded games data.
+        This is used when loading from cache to ensure consistency.
+        """
+        if not self.games_data:
+            return
+        
+        print(f"Applying all filters and corrections to {len(self.games_data)} cached games...")
+        
+        # Reset corrections tracking since we're applying all logic again
+        self._corrections_made = {
+            'player_perspective_corrected': 0,
+            'winner_corrected': 0,
+            'games_skipped_invalid_elo': 0,
+            'games_skipped_duplicates': 0,
+            'games_skipped_hardcoded': 0
+        }
+        
+        # Reset processed games tracking
+        self._processed_games = set()
+        
+        # Filter out games that don't match additional criteria
+        filtered_games = []
+        
+        for game_data in tqdm(self.games_data, desc="Filtering cached games", unit="game"):
+            # Check prelude setting
+            if PRELUDE_MUST_BE_ON:
+                if not game_data.get('prelude_on', False):
+                    continue
+            
+            # Check starting hand requirement
+            if MUST_INCLUDE_STARTING_HAND:
+                # Check if any player has starting_hand data
+                players = game_data.get('players', {})
+                has_starting_hand = False
+                for player_data in players.values():
+                    if isinstance(player_data, dict) and 'starting_hand' in player_data:
+                        has_starting_hand = True
+                        break
+                if not has_starting_hand:
+                    continue
+            
+            # Check opponent ELO requirement
+            if PLAYERS_ELO_OVER_THRESHOLD:
+                players = game_data.get('players', {})
+                all_players_above_threshold = True
+
+                for player_data in players.values():
+                    if not isinstance(player_data, dict):
+                        all_players_above_threshold = False
+                        break
+
+                    elo_data = player_data.get('elo_data', {})
+                    if not isinstance(elo_data, dict):
+                        all_players_above_threshold = False
+                        break
+
+                    game_rank = elo_data.get('game_rank')
+                    try:
+                        if int(game_rank) < ELO_THRESHOLD:
+                            all_players_above_threshold = False
+                            break
+                    except (ValueError, TypeError):
+                        all_players_above_threshold = False
+                        break
+
+                if not all_players_above_threshold:
+                    continue
+            
+            # Apply player perspective correction if needed
+            moves = game_data.get('moves', [])
+            if moves:
+                original_player_perspective = game_data.get('player_perspective', '')
+                if original_player_perspective:
+                    corrected_perspective, was_corrected = self._correct_player_perspective(moves, original_player_perspective)
+                    if was_corrected:
+                        game_data['player_perspective'] = corrected_perspective
+                        game_data['_player_perspective_corrected'] = True
+                        self._corrections_made['player_perspective_corrected'] += 1
+            
+            # Apply winner correction if needed
+            corrected_winner, winner_was_corrected = self._correct_winner(game_data)
+            if winner_was_corrected:
+                game_data['winner'] = corrected_winner
+                game_data['_winner_corrected'] = True
+                self._corrections_made['winner_corrected'] += 1
+            
+            # Check for duplicate games (same replay_id and player_perspective combination)
+            if self._check_and_track_duplicate_game(game_data.get('replay_id', ''), game_data.get('player_perspective', '')):
+                self._corrections_made['games_skipped_duplicates'] += 1
+                continue
+            
+            # Game passed all filters and corrections
+            filtered_games.append(game_data)
+        
+        # Update the games data
+        self.games_data = filtered_games
+
     def _matches_criteria_basic(self, game_data: Dict) -> bool:
         """
-        Check if a game matches the basic criteria (Tharsis map, 2 players, basic settings).
+        Check if a game matches the basic criteria and apply all necessary corrections.
         This is used during initial loading to create the cache.
         
         Args:
             game_data: Game data dictionary
             
         Returns:
-            True if game matches basic criteria, False otherwise
+            True if game matches basic criteria and passes all filters, False otherwise
         """
         # Check replay ID filter first (if set)
         if self.replay_id_filter:
             if game_data.get('replay_id') != self.replay_id_filter:
                 return False
+        
+        # Skip games that are in the SKIPPED_GAMES list
+        replay_id = game_data.get('replay_id', '')
+        if replay_id in SKIPPED_GAMES:
+            self._corrections_made['games_skipped_hardcoded'] += 1
+            return False
         
         # Check map
         if game_data.get('map') != REQUIRED_MAP:
@@ -304,7 +572,35 @@ class TerraformingMarsAnalyzer:
         player_count = len([p for p in players.values() if isinstance(p, dict)])
         if player_count != REQUIRED_PLAYER_COUNT:
             return False
-            
+        
+        # Check if game has valid ELO data for all players
+        if not self._has_valid_elo_data(game_data):
+            self._corrections_made['games_skipped_invalid_elo'] += 1
+            return False
+        
+        # Apply player perspective correction if needed
+        moves = game_data.get('moves', [])
+        if moves:
+            original_player_perspective = game_data.get('player_perspective', '')
+            if original_player_perspective:
+                corrected_perspective, was_corrected = self._correct_player_perspective(moves, original_player_perspective)
+                if was_corrected:
+                    game_data['player_perspective'] = corrected_perspective
+                    game_data['_player_perspective_corrected'] = True
+                    self._corrections_made['player_perspective_corrected'] += 1
+        
+        # Apply winner correction if needed
+        corrected_winner, winner_was_corrected = self._correct_winner(game_data)
+        if winner_was_corrected:
+            game_data['winner'] = corrected_winner
+            game_data['_winner_corrected'] = True
+            self._corrections_made['winner_corrected'] += 1
+        
+        # Check for duplicate games (same replay_id and player_perspective combination)
+        if self._check_and_track_duplicate_game(replay_id, game_data.get('player_perspective', '')):
+            self._corrections_made['games_skipped_duplicates'] += 1
+            return False
+        
         return True
 
     def analyze_multiple_cards(self, cards_to_analyze: list, use_cache: bool = True):
@@ -384,7 +680,7 @@ def display_analysis_settings(replay_id_filter: str = None, card_name: str = Non
     
     print(f"Prelude Required: {'Yes' if PRELUDE_MUST_BE_ON else 'No'}")
     print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
-    print(f"Players ELO Over 300 Required: {'Yes' if PLAYERS_ELO_OVER_THRESHOLD else 'No'}")
+    print(f"Players ELO Over Threshold Required: {'Yes' if PLAYERS_ELO_OVER_THRESHOLD else 'No'}")
     
     if replay_id_filter:
         print(f"🔍 Additional filter: Replay ID = {replay_id_filter}")

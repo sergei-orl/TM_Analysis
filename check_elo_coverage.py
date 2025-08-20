@@ -22,34 +22,6 @@ except ImportError:
 
 from tm_data_analyzer import TerraformingMarsAnalyzer
 
-def _correct_player_perspective(moves: list, original_player_perspective: str) -> str:
-    """
-    Detect and correct player perspective based on "You choose corporation" move.
-    Same logic as in card_analyzer.
-    
-    Args:
-        moves: List of moves for the game
-        original_player_perspective: Original player perspective ID
-        
-    Returns:
-        Corrected player perspective ID
-    """
-    for move in moves:
-        if not isinstance(move, dict):
-            continue
-        
-        description = move.get('description', '')
-        player_id = move.get('player_id', '')
-        
-        if "You choose corporation" in description:
-            if player_id != original_player_perspective:
-                return player_id
-            else:
-                return original_player_perspective
-    
-    # No "You choose corporation" found, keep original
-    return original_player_perspective
-
 def categorize_elo(elo_value: int) -> str:
     """
     Categorize ELO value into 100-point ranges.
@@ -102,9 +74,6 @@ def check_elo_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
     player_elo_distribution = defaultdict(int)
     opponent_elo_distribution = defaultdict(int)
     
-    # Track games with ELO data issues
-    games_with_elo_issues = []
-    
     # Track ELO data quality
     elo_data_quality = {
         'valid_elo_values': 0,
@@ -114,23 +83,12 @@ def check_elo_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
     }
     
     for game in analyzer.games_data:
-        replay_id = game.get('replay_id', 'unknown')
         players = game.get('players', {})
-        moves = game.get('moves', [])
         
         # Get player perspective (same logic as card_analyzer)
         player_perspective = game.get('player_perspective', '')
         
-        # Correct player perspective if needed (same logic as card_analyzer)
-        corrected_player_perspective = _correct_player_perspective(moves, player_perspective)
-        
-        if not corrected_player_perspective:
-            # Skip games where we can't determine player perspective
-            continue
-        
-        game_has_elo_data = False
         game_elo_info = []
-        game_elo_issues = []
         
         # Process each player in the game
         for player_id, player_data in players.items():
@@ -140,72 +98,45 @@ def check_elo_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
                 # Check for ELO data
                 elo_data = player_data.get('elo_data', {})
                 if elo_data and isinstance(elo_data, dict):
-                    game_has_elo_data = True
                     
                     # Check for game_rank (actual ELO value)
                     game_rank = elo_data.get('game_rank')
                     
                     if game_rank is not None:
-                        try:
-                            elo_value = int(game_rank)
-                            elo_data_quality['valid_elo_values'] += 1
-                            
-                            # Categorize ELO value
-                            elo_range = categorize_elo(elo_value)
-                            
-                            # Determine if this is the player or opponent
-                            if player_id == corrected_player_perspective:
-                                # This is the player (us)
-                                player_elo_distribution[elo_range] += 1
-                                game_elo_info.append(f"Player {player_id} (US): {elo_value} ({elo_range})")
-                            else:
-                                # This is the opponent
-                                opponent_elo_distribution[elo_range] += 1
-                                total_opponents_checked += 1
-                                game_elo_info.append(f"Player {player_id} (OPPONENT): {elo_value} ({elo_range})")
-                            
-                        except (ValueError, TypeError):
-                            elo_data_quality['invalid_elo_values'] += 1
-                            game_elo_issues.append(f"Player {player_id}: Invalid ELO format '{game_rank}'")
-                    else:
-                        elo_data_quality['none_elo_values'] += 1
-                        game_elo_issues.append(f"Player {player_id}: Missing game_rank")
-                else:
-                    elo_data_quality['missing_elo_data'] += 1
-                    game_elo_issues.append(f"Player {player_id}: No elo_data section")
-        
-        # All games have ELO data, so just track issues
-        if game_has_elo_data:
-            games_with_elo_data += 1
-            
-            # Check if all players have valid ELO data
-            if game_elo_issues:
-                games_with_elo_issues.append({
-                    'replay_id': replay_id,
-                    'issues': game_elo_issues,
-                    'valid_elo_info': game_elo_info
-                })
+                        elo_value = int(game_rank)
+                        elo_data_quality['valid_elo_values'] += 1
+                        
+                        # Categorize ELO value
+                        elo_range = categorize_elo(elo_value)
+                        
+                        # Determine if this is the player or opponent
+                        if player_id == player_perspective:
+                            # This is the player (us)
+                            player_elo_distribution[elo_range] += 1
+                            game_elo_info.append(f"Player {player_id} (US): {elo_value} ({elo_range})")
+                        else:
+                            # This is the opponent
+                            opponent_elo_distribution[elo_range] += 1
+                            total_opponents_checked += 1
+                            game_elo_info.append(f"Player {player_id} (OPPONENT): {elo_value} ({elo_range})")
     
     # Calculate coverage statistics
     total_games = len(analyzer.games_data)
     coverage_stats = {
         'total_games': total_games,
         'games_with_elo_data': games_with_elo_data,
-        'games_with_elo_issues': len(games_with_elo_issues),
         'total_players_checked': total_players_checked,
         'total_opponents_checked': total_opponents_checked,
         'coverage_percentage': 100.0,  # All games have ELO data
         'elo_data_quality': elo_data_quality,
         'player_elo_distribution': dict(player_elo_distribution),
         'opponent_elo_distribution': dict(opponent_elo_distribution),
-        'games_with_elo_issues': games_with_elo_issues
     }
     
     # Display results
     print(f"\nELO Coverage and Distribution Analysis:")
     print(f"Total games: {coverage_stats['total_games']}")
     print(f"Games with ELO data: {coverage_stats['games_with_elo_data']}")
-    print(f"Games with ELO issues: {coverage_stats['games_with_elo_issues']}")
     print(f"Coverage: {coverage_stats['coverage_percentage']}%")
     print(f"Total players checked: {coverage_stats['total_players_checked']}")
     print(f"Total opponents checked: {coverage_stats['total_opponents_checked']}")
@@ -213,9 +144,7 @@ def check_elo_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
     # Show ELO data quality
     print(f"\nELO Data Quality:")
     print(f"Valid ELO values: {elo_data_quality['valid_elo_values']}")
-    print(f"Invalid ELO values: {elo_data_quality['invalid_elo_values']}")
     print(f"Missing ELO data: {elo_data_quality['missing_elo_data']}")
-    print(f"None ELO values: {elo_data_quality['none_elo_values']}")
     
     # Show player ELO distribution
     print(f"\nPlayer ELO Distribution:")
@@ -230,27 +159,6 @@ def check_elo_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
         count = opponent_elo_distribution[elo_range]
         percentage = round((count / total_opponents_checked) * 100, 1) if total_opponents_checked > 0 else 0
         print(f"  {elo_range}: {count} opponents ({percentage}%)")
-    
-    # Show examples of games with ELO issues
-    if games_with_elo_issues:
-        print(f"\nExamples of games with ELO issues:")
-        for i, game_info in enumerate(games_with_elo_issues[:5]):  # Show first 5
-            print(f"  {i+1}. Replay {game_info['replay_id']}:")
-            for issue in game_info['issues']:
-                print(f"      - {issue}")
-            if game_info['valid_elo_info']:
-                print(f"      Valid ELO: {', '.join(game_info['valid_elo_info'])}")
-        if len(games_with_elo_issues) > 5:
-            print(f"  ... and {len(games_with_elo_issues) - 5} more")
-    
-    # Show examples of games with missing ELO data
-    # This section is no longer needed
-    # if games_with_missing_elo:
-    #     print(f"\nExamples of games with missing ELO data:")
-    #     for i, game_info in enumerate(games_with_missing_elo[:5]):  # Show first 5
-    #         print(f"  {i+1}. Replay {game_info['replay_id']}: Players {', '.join(game_info['players'])}")
-    #     if len(games_with_missing_elo) > 5:
-    #         print(f"  ... and {len(games_with_missing_elo) - 5} more")
     
     return coverage_stats
 

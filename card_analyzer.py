@@ -6,11 +6,6 @@ from tqdm import tqdm
 import re
 from config import MUST_INCLUDE_STARTING_HAND
 
-SKIPPED_GAMES = [
-    "603866588",
-    "521063871"
-]
-
 FREE_DRAW_METHODS = [
     "draw", "draw_ai_central", "draw_convoy_from_europa", "draw_development_center",
     "draw_lagrange_observatory", "draw_large_convoy", "draw_mars_university", 
@@ -75,6 +70,7 @@ class CardAnalyzer:
             'kept_in_starting_hand': 0,
             'drawn_by_generation': Counter(),
             'played_by_generation': Counter(),
+            'seen_count': 0,
             'drawn_count': 0,
             'played_count': 0,
             'kept_and_played': 0,
@@ -90,8 +86,6 @@ class CardAnalyzer:
             'drawn_not_played_by_gen': [],  # List of drawn_gen for cards that were drawn but not played
             'moves_card_seen_more_than_once': {},  # Only games with multiple seen_method moves
             'multiple_draws_games': {},  # Special tracking for games with multiple draws
-            'wrong_player_perspective_replay_ids': [],  # Track games where player_perspective was corrected
-            'duplicated_games_replay_ids': [],  # Track games that are skipped due to duplicates
             'played_but_not_drawn_ids': [],  # Track replay IDs of games where cards were played but not drawn
             'draft_takeback_context': {}, # Track context for draft moves with takebacks
             'draft_no_takebacks_context': {}, # Track context for draft moves without takebacks
@@ -127,8 +121,6 @@ class CardAnalyzer:
             },  # Distribution of ELO gains in buckets
             'actual_elo_values': [],  # Store actual ELO values for accurate average calculation
             'game_ranks': [],  # Store actual ELO ratings at game start for average calculation
-            'incorrect_elo': 0,  # Count of games with invalid ELO data
-            'incorrect_elo_ids': [],  # Track replay IDs of games with invalid ELO data
             'player_corporations': Counter(),  # Track corporations used by player_perspective
             # New fields for different win percentage calculations
             'total_games_when_seen': 0,  # Games where card was seen (excluding reveal moves)
@@ -169,8 +161,6 @@ class CardAnalyzer:
             'plays_when_bought_during_game': 0,  # Plays in games where card was bought during game
             'plays_when_bought_overall': 0,  # Plays in games where card was bought (during game + starting hand)
             'plays_when_drawn_for_free': 0,  # Plays in games where card was drawn (excluding buy methods and starting hand)
-            'plays_when_card_was_keepable': 0,  # Plays in games where card was keepable
-            'plays_when_card_was_in_hand': 0,  # Plays in games where card was in hand
             # Separate ELO tracking for each case - allows us to calculate average ELO gains and ratings
             # for different scenarios (when card was seen, drawn, bought, played, and by prelude status)
             'elo_values_when_seen': [],  # ELO values when card was seen
@@ -305,33 +295,6 @@ class CardAnalyzer:
                 break
         
         return kept_in_hand    
-    
-    def _correct_player_perspective(self, moves: list, original_player_perspective: str) -> tuple[str, bool]:
-        """
-        Detect and correct player perspective based on "You choose corporation" move.
-        
-        Args:
-            moves: List of moves for the game
-            original_player_perspective: Original player perspective ID
-            
-        Returns:
-            Tuple of (corrected_player_perspective, was_corrected)
-        """
-        for move in moves:
-            if not isinstance(move, dict):
-                continue
-            
-            description = move.get('description', '')
-            player_id = move.get('player_id', '')
-            
-            if "You choose corporation" in description:
-                if player_id != original_player_perspective:
-                    return player_id, True
-                else:
-                    return original_player_perspective, False
-        
-        # No "You choose corporation" found, keep original
-        return original_player_perspective, False
     
     def _strip_confusing_patterns(self, description: str, card_name: str) -> str:
         """
@@ -800,29 +763,6 @@ class CardAnalyzer:
         
         return result
 
-    def _check_and_track_duplicate_game(self, replay_id: str, player_perspective: str, card_stats: Dict[str, Any]) -> bool:
-        """
-        Check if a game has already been processed and track it if it's a duplicate.
-        
-        Args:
-            replay_id: The replay ID of the game
-            player_perspective: The player perspective ID
-            card_stats: The card statistics dictionary to update
-            
-        Returns:
-            True if this is a duplicate game, False otherwise
-        """
-        game_key = f"{replay_id}_{player_perspective}"
-        if hasattr(self, '_processed_games') and game_key in self._processed_games:
-            card_stats['duplicated_games_replay_ids'].append(replay_id)
-            return True
-        else:
-            # Mark this game as processed
-            if not hasattr(self, '_processed_games'):
-                self._processed_games = set()
-            self._processed_games.add(game_key)
-            return False
-
     def _track_move_context(self, card_stats: Dict[str, Any], replay_id: str, 
                            moves: list, current_index: int, move_type: str,
                            incorrect_draft: int = None, has_takeback: bool = None,
@@ -1148,27 +1088,6 @@ class CardAnalyzer:
         # Check for multiple draws
         card_stats['multiple_draws_replay_ids'] = list(card_stats['multiple_draws_games'].keys())
         
-        # Add summary for wrong player perspective cases
-        if card_stats['wrong_player_perspective_replay_ids']:
-            card_stats['wrong_player_perspective_summary'] = {
-                'total_cases': len(card_stats['wrong_player_perspective_replay_ids']),
-                'replay_ids': card_stats['wrong_player_perspective_replay_ids']
-            }
-        
-        # Add summary for duplicated games
-        if card_stats['duplicated_games_replay_ids']:
-            card_stats['duplicated_games_summary'] = {
-                'total_cases': len(card_stats['duplicated_games_replay_ids']),
-                'replay_ids': card_stats['duplicated_games_replay_ids']
-            }
-        
-        # Add summary for incorrect ELO cases
-        if card_stats['incorrect_elo_ids']:
-            card_stats['incorrect_elo_summary'] = {
-                'total_cases': len(card_stats['incorrect_elo_ids']),
-                'replay_ids': card_stats['incorrect_elo_ids']
-            }
-        
         # Calculate player performance statistics
         def calc_win_rate(stats, win_key, total_key):
             total = stats.get(total_key, 0)
@@ -1233,6 +1152,9 @@ class CardAnalyzer:
             'card_name': card_stats['card_name'],
             'total_games_analyzed': card_stats['total_games_analyzed'],
             'total_games_with_card': card_stats['total_games_with_card'],
+            'seen_count': card_stats['total_games_when_seen'],
+            'drawn_count': card_stats['drawn_count'],
+            'played_count': card_stats['played_count'],
             'win_count_by_case': {
                 'overall': card_stats['win_count'],
                 'when_seen': card_stats['win_count_when_seen'],
@@ -1285,8 +1207,6 @@ class CardAnalyzer:
                 'play_to_keep_rate': card_stats.get('play_to_keep_rate', 0),
                 'keep_rate': card_stats.get('keep_rate', 0)
             },
-            'drawn_count': card_stats['drawn_count'],
-            'played_count': card_stats['played_count'],
             # Draft and buy statistics
             'draft_buy_stats': {
                 'draft_1_buys': card_stats['draft_1_buys'],
@@ -1308,9 +1228,7 @@ class CardAnalyzer:
                 'play_per_card_in_hand_rate': card_stats['play_per_card_in_hand_rate'],
                 'plays_when_bought_during_game': card_stats['plays_when_bought_during_game'],
                 'plays_when_bought_overall': card_stats['plays_when_bought_overall'],
-                'plays_when_drawn_for_free': card_stats['plays_when_drawn_for_free'],
-                'plays_when_card_was_keepable': card_stats['plays_when_card_was_keepable'],
-                'plays_when_card_was_in_hand': card_stats['plays_when_card_was_in_hand']
+                'plays_when_drawn_for_free': card_stats['plays_when_drawn_for_free']
             },
             'keep_rates': card_stats.get('keep_rates', {}),
             'draw_methods': card_stats['draw_methods'],
@@ -1340,7 +1258,6 @@ class CardAnalyzer:
                 '17 to 18': card_stats['elo_gains']['17 to 18'],
                 '19 and up': card_stats['elo_gains']['19 and up']
             },
-            'incorrect_elo': card_stats['incorrect_elo'],
             'drawn_by_generation': card_stats['drawn_by_generation'],
             'played_by_generation': card_stats['played_by_generation'],
             'draw_free': card_stats['draw_free'],
@@ -1362,9 +1279,6 @@ class CardAnalyzer:
             'other_context': card_stats['other_context'],
             'game_moves_by_card': card_stats['game_moves_by_card'],
             'draw_draft_buy_without_draft_ids': card_stats['draw_draft_buy_without_draft_ids'],
-            # 'wrong_player_perspective_summary': card_stats.get('wrong_player_perspective_summary', {}),
-            # 'duplicated_games_summary': card_stats.get('duplicated_games_summary', {}),
-            'incorrect_elo_summary': card_stats.get('incorrect_elo_summary', {}),
         }
         
         return reordered_stats
@@ -1393,40 +1307,6 @@ class CardAnalyzer:
             card_stats['games_with_prelude'] += 1
         else:
             card_stats['games_without_prelude'] += 1
-        
-        # Track if this game has invalid ELO data (at game level, not per-player)
-        game_has_invalid_elo = False
-        
-        # Find elo_gainer and elo_loser
-        elo_gainer = 'unknown'
-        elo_loser = 'unknown'
-        for player_id, player_data in players.items():
-            if not isinstance(player_data, dict):
-                continue
-                
-            player_name = player_data.get('player_name', 'unknown')
-            elo_data = player_data.get('elo_data')
-            
-            if elo_data and isinstance(elo_data, dict):
-                game_rank_change = elo_data.get('game_rank_change', 0)
-                if game_rank_change is None or not isinstance(game_rank_change, (int, float)):
-                    game_has_invalid_elo = True
-                    card_stats['incorrect_elo'] += 1
-                    card_stats['incorrect_elo_ids'].append(game.get('replay_id'))
-                    continue
-                
-                if game_rank_change > 0:
-                    elo_gainer = player_name
-                elif game_rank_change < 0:
-                    elo_loser = player_name
-            else:
-                game_has_invalid_elo = True
-                card_stats['incorrect_elo'] += 1
-                card_stats['incorrect_elo_ids'].append(game.get('replay_id'))
-        
-        # Correct winner if needed: if elo_gainer != winner and elo_loser == winner, rewrite winner
-        if elo_gainer != 'unknown' and elo_gainer != winner and elo_loser == winner:
-            winner = elo_gainer
         
         # Find player_perspective player data
         player_perspective_data = None
@@ -1463,33 +1343,32 @@ class CardAnalyzer:
                 else:
                     card_stats['wins_without_prelude'] += 1
             
-            # Get ELO gain for player_perspective (only if game has valid ELO data)
-            if not game_has_invalid_elo:
-                elo_data = player_perspective_data.get('elo_data')
-                game_rank_change = 0  # Default value
-                game_rank = 0  # Default value
-                if elo_data and isinstance(elo_data, dict):
-                    game_rank_change = elo_data.get('game_rank_change', 0)
-                    game_rank = elo_data.get('game_rank', 0)  # Get the player's ELO rating at game start
-                    
-                    # Track ELO gain distribution
-                    card_stats['elo_gains'][self._get_elo_bucket(game_rank_change)] += 1
-                    card_stats['actual_elo_values'].append(game_rank_change) # Store actual value
-                    card_stats['game_ranks'].append(game_rank) # Store actual ELO rating
-                    
-                    # Track ELO values separately for each case
-                    if game_with_card_besides_reveal:
-                        card_stats['elo_values_when_seen'].append(game_rank_change)
-                        card_stats['game_ranks_when_seen'].append(game_rank)
-                    if game_has_draw_move:
-                        card_stats['elo_values_when_drawn'].append(game_rank_change)
-                        card_stats['game_ranks_when_drawn'].append(game_rank)
-                    if game_has_buy_move:
-                        card_stats['elo_values_when_bought_during_game'].append(game_rank_change)
-                        card_stats['game_ranks_when_bought_during_game'].append(game_rank)
-                    if game_has_play_move:
-                        card_stats['elo_values_when_played'].append(game_rank_change)
-                        card_stats['game_ranks_when_played'].append(game_rank)
+            # Get ELO gain for player_perspective
+            elo_data = player_perspective_data.get('elo_data')
+            game_rank_change = 0  # Default value
+            game_rank = 0  # Default value
+            if elo_data and isinstance(elo_data, dict):
+                game_rank_change = elo_data.get('game_rank_change', 0)
+                game_rank = elo_data.get('game_rank', 0)  # Get the player's ELO rating at game start
+                
+                # Track ELO gain distribution
+                card_stats['elo_gains'][self._get_elo_bucket(game_rank_change)] += 1
+                card_stats['actual_elo_values'].append(game_rank_change) # Store actual value
+                card_stats['game_ranks'].append(game_rank) # Store actual ELO rating
+                
+                # Track ELO values separately for each case
+                if game_with_card_besides_reveal:
+                    card_stats['elo_values_when_seen'].append(game_rank_change)
+                    card_stats['game_ranks_when_seen'].append(game_rank)
+                if game_has_draw_move:
+                    card_stats['elo_values_when_drawn'].append(game_rank_change)
+                    card_stats['game_ranks_when_drawn'].append(game_rank)
+                if game_has_buy_move:
+                    card_stats['elo_values_when_bought_during_game'].append(game_rank_change)
+                    card_stats['game_ranks_when_bought_during_game'].append(game_rank)
+                if game_has_play_move:
+                    card_stats['elo_values_when_played'].append(game_rank_change)
+                    card_stats['game_ranks_when_played'].append(game_rank)
 
     def tfm_card_analyzer(self, card_name: str) -> Dict[str, Any]:
         """
@@ -1513,19 +1392,6 @@ class CardAnalyzer:
             replay_id = game.get('replay_id', '')
             
             if not moves or not player_perspective:
-                continue
-            
-            # Correct player perspective if needed
-            player_perspective, was_corrected = self._correct_player_perspective(moves, player_perspective)
-            if was_corrected:
-                card_stats['wrong_player_perspective_replay_ids'].append(replay_id)
-            
-            # Check for duplicate games (same replay_id and player_perspective combination)
-            if self._check_and_track_duplicate_game(replay_id, player_perspective, card_stats):
-                continue
-            
-            # Skip games that are in the SKIPPED_GAMES list
-            if replay_id in SKIPPED_GAMES:
                 continue
             
             card_stats['total_games_analyzed'] += 1
@@ -2126,10 +1992,6 @@ class CardAnalyzer:
             card_stats['plays_when_bought_overall'] += 1
         if game_has_draw_no_buy_move and game_has_play_move:
             card_stats['plays_when_drawn_for_free'] += 1
-        if game_with_card_besides_reveal and game_has_play_move:
-            card_stats['plays_when_card_was_keepable'] += 1
-        if game_has_any_draw_move and game_has_play_move:
-            card_stats['plays_when_card_was_in_hand'] += 1
             
         return game_with_card_besides_reveal, game_has_any_draw_move, game_has_buy_move, game_has_play_move
 
