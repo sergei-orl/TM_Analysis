@@ -307,7 +307,7 @@ class TerraformingMarsAnalyzer:
                 with open(json_file, 'r', encoding='utf-8') as f:
                     game_data = json.load(f)
                     
-                    # Immediate filtering during loading (excluding Prelude and Starting Hand)
+                    # Immediate filtering during loading
                     if self._matches_criteria_basic(game_data):
                         game_data['_file_path'] = str(json_file)
                         self.games_data.append(game_data)
@@ -359,6 +359,66 @@ class TerraformingMarsAnalyzer:
         else:
             print("\n✅ No corrections or filtering needed during data loading")
 
+    def _apply_common_filters(self, game_data: Dict) -> bool:
+        """
+        Apply common filters that are shared between different filtering methods.
+        
+        Args:
+            game_data: Game data dictionary
+            
+        Returns:
+            True if game passes all common filters, False otherwise
+        """
+        # Check prelude setting
+        if PRELUDE_MUST_BE_ON:
+            if not game_data.get('prelude_on', False):
+                return False
+        
+        # Check starting hand requirement
+        if MUST_INCLUDE_STARTING_HAND:
+            # Check if any player has starting_hand data
+            players = game_data.get('players', {})
+            has_starting_hand = False
+            for player_data in players.values():
+                if isinstance(player_data, dict) and 'starting_hand' in player_data:
+                    has_starting_hand = True
+                    break
+            if not has_starting_hand:
+                return False
+        
+        # Check opponent ELO requirement
+        if PLAYERS_ELO_OVER_THRESHOLD:
+            players = game_data.get('players', {})
+            all_players_above_threshold = True
+
+            for player_data in players.values():
+                if not isinstance(player_data, dict):
+                    all_players_above_threshold = False
+                    break
+
+                elo_data = player_data.get('elo_data', {})
+                if not isinstance(elo_data, dict):
+                    all_players_above_threshold = False
+                    break
+
+                game_rank = elo_data.get('game_rank')
+                try:
+                    if int(game_rank) < ELO_THRESHOLD:
+                        all_players_above_threshold = False
+                        break
+                except (ValueError, TypeError):
+                    all_players_above_threshold = False
+                    break
+
+            if not all_players_above_threshold:
+                return False
+        
+        # Check conceded filter
+        if CONCEDED_OFF and 'conceded' in game_data:
+            return False
+        
+        return True
+
     def _apply_additional_filters_to_cached_data(self):
         """
         Apply Prelude, Starting Hand, and Opponent ELO filters to already loaded games data.
@@ -384,49 +444,9 @@ class TerraformingMarsAnalyzer:
                 self._corrections_made['games_skipped_invalid_elo'] += 1
                 continue
             
-            # Check prelude setting
-            if PRELUDE_MUST_BE_ON:
-                if not game_data.get('prelude_on', False):
-                    continue
-            
-            # Check starting hand requirement
-            if MUST_INCLUDE_STARTING_HAND:
-                # Check if any player has starting_hand data
-                players = game_data.get('players', {})
-                has_starting_hand = False
-                for player_data in players.values():
-                    if isinstance(player_data, dict) and 'starting_hand' in player_data:
-                        has_starting_hand = True
-                        break
-                if not has_starting_hand:
-                    continue
-            
-            # Check opponent ELO requirement
-            if PLAYERS_ELO_OVER_THRESHOLD:
-                players = game_data.get('players', {})
-                all_players_above_threshold = True
-
-                for player_data in players.values():
-                    if not isinstance(player_data, dict):
-                        all_players_above_threshold = False
-                        break
-
-                    elo_data = player_data.get('elo_data', {})
-                    if not isinstance(elo_data, dict):
-                        all_players_above_threshold = False
-                        break
-
-                    game_rank = elo_data.get('game_rank')
-                    try:
-                        if int(game_rank) < ELO_THRESHOLD:
-                            all_players_above_threshold = False
-                            break
-                    except (ValueError, TypeError):
-                        all_players_above_threshold = False
-                        break
-
-                if not all_players_above_threshold:
-                    continue
+            # Apply common filters
+            if not self._apply_common_filters(game_data):
+                continue
             
             # Game passed all additional filters
             filtered_games.append(game_data)
@@ -460,49 +480,9 @@ class TerraformingMarsAnalyzer:
         filtered_games = []
         
         for game_data in tqdm(self.games_data, desc="Filtering cached games", unit="game"):
-            # Check prelude setting
-            if PRELUDE_MUST_BE_ON:
-                if not game_data.get('prelude_on', False):
-                    continue
-            
-            # Check starting hand requirement
-            if MUST_INCLUDE_STARTING_HAND:
-                # Check if any player has starting_hand data
-                players = game_data.get('players', {})
-                has_starting_hand = False
-                for player_data in players.values():
-                    if isinstance(player_data, dict) and 'starting_hand' in player_data:
-                        has_starting_hand = True
-                        break
-                if not has_starting_hand:
-                    continue
-            
-            # Check opponent ELO requirement
-            if PLAYERS_ELO_OVER_THRESHOLD:
-                players = game_data.get('players', {})
-                all_players_above_threshold = True
-
-                for player_data in players.values():
-                    if not isinstance(player_data, dict):
-                        all_players_above_threshold = False
-                        break
-
-                    elo_data = player_data.get('elo_data', {})
-                    if not isinstance(elo_data, dict):
-                        all_players_above_threshold = False
-                        break
-
-                    game_rank = elo_data.get('game_rank')
-                    try:
-                        if int(game_rank) < ELO_THRESHOLD:
-                            all_players_above_threshold = False
-                            break
-                    except (ValueError, TypeError):
-                        all_players_above_threshold = False
-                        break
-
-                if not all_players_above_threshold:
-                    continue
+            # Apply common filters
+            if not self._apply_common_filters(game_data):
+                continue
             
             # Apply player perspective correction if needed
             moves = game_data.get('moves', [])
@@ -681,6 +661,7 @@ def display_analysis_settings(replay_id_filter: str = None, card_name: str = Non
     print(f"Prelude Required: {'Yes' if PRELUDE_MUST_BE_ON else 'No'}")
     print(f"Starting Hand Required: {'Yes' if MUST_INCLUDE_STARTING_HAND else 'No'}")
     print(f"Players ELO Over Threshold Required: {'Yes' if PLAYERS_ELO_OVER_THRESHOLD else 'No'}")
+    print(f"Skip Conceded Games: {'Yes' if CONCEDED_OFF else 'No'}")
     
     if replay_id_filter:
         print(f"🔍 Additional filter: Replay ID = {replay_id_filter}")

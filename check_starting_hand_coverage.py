@@ -39,12 +39,30 @@ def check_starting_hand_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
     total_players_checked = 0
     games_with_starting_hand_details = []
     
+    # Track conceded games
+    games_conceded = 0
+    games_not_conceded = 0
+    games_with_conceded_param = 0
+    games_without_conceded_param = 0
+    
     for game in analyzer.games_data:
         replay_id = game.get('replay_id', 'unknown')
         players = game.get('players', {})
         game_has_starting_hand = False
         game_starting_hand_info = []
         game_has_preludes = False # Initialize for each game
+        
+        # Check if game was conceded
+        if 'conceded' in game:
+            games_with_conceded_param += 1
+            game_conceded = game['conceded']
+            if game_conceded:
+                games_conceded += 1
+            else:
+                games_not_conceded += 1
+        else:
+            games_without_conceded_param += 1
+            game_conceded = None  # No conceded parameter present
         
         for player_id, player_data in players.items():
             if isinstance(player_data, dict):
@@ -90,7 +108,8 @@ def check_starting_hand_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
             games_with_starting_hand_details.append({
                 'replay_id': replay_id,
                 'starting_hand_info': game_starting_hand_info,
-                'has_preludes': game_has_preludes
+                'has_preludes': game_has_preludes,
+                'conceded': game_conceded
             })
         else:
             games_without_starting_hand += 1
@@ -99,6 +118,10 @@ def check_starting_hand_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
     games_with_preludes = sum(1 for game in games_with_starting_hand_details if game['has_preludes'])
     games_without_preludes = len(games_with_starting_hand_details) - games_with_preludes
     
+    # Count conceded games among those with starting hand data
+    games_with_starting_hand_conceded = sum(1 for game in games_with_starting_hand_details if game['conceded'])
+    games_with_starting_hand_not_conceded = len(games_with_starting_hand_details) - games_with_starting_hand_conceded
+    
     coverage_stats = {
         'total_games': len(analyzer.games_data),
         'games_with_starting_hand': games_with_starting_hand,
@@ -106,10 +129,23 @@ def check_starting_hand_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
         'total_players_checked': total_players_checked,
         'coverage_percentage': round((games_with_starting_hand / len(analyzer.games_data)) * 100, 2) if analyzer.games_data else 0,
         'games_with_starting_hand_details': games_with_starting_hand_details,
+        'conceded_coverage': {
+            'games_with_conceded_param': games_with_conceded_param,
+            'games_without_conceded_param': games_without_conceded_param,
+            'conceded_param_coverage': round((games_with_conceded_param / len(analyzer.games_data)) * 100, 2) if analyzer.games_data else 0,
+            'total_games_conceded': games_conceded,
+            'total_games_not_conceded': games_not_conceded,
+            'conceded_percentage': round((games_conceded / len(analyzer.games_data)) * 100, 2) if analyzer.games_data else 0,
+            'games_with_starting_hand_conceded': games_with_starting_hand_conceded,
+            'games_with_starting_hand_not_conceded': games_with_starting_hand_not_conceded,
+            'conceded_percentage_with_starting_hand': round((games_with_starting_hand_conceded / games_with_starting_hand) * 100, 2) if games_with_starting_hand > 0 else 0
+        },
         'prelude_coverage': {
             'games_with_preludes': games_with_preludes,
             'games_without_preludes': games_without_preludes,
-            'prelude_percentage': round((games_with_preludes / games_with_starting_hand) * 100, 2) if games_with_starting_hand > 0 else 0
+            'prelude_percentage': round((games_with_preludes / games_with_starting_hand) * 100, 2) if games_with_starting_hand > 0 else 0,
+            'total_games_with_preludes': games_with_preludes,
+            'total_games_without_preludes': games_without_preludes
         }
     }
     
@@ -120,21 +156,28 @@ def check_starting_hand_coverage(analyzer: TerraformingMarsAnalyzer) -> dict:
     print(f"Coverage: {coverage_stats['coverage_percentage']}%")
     print(f"Total players checked: {coverage_stats['total_players_checked']}")
     
+    # Show conceded coverage
+    print(f"\nConceded Parameter Coverage:")
+    print(f"Games with 'conceded' parameter: {games_with_conceded_param}")
+    print(f"Games without 'conceded' parameter: {games_without_conceded_param}")
+    print(f"Conceded parameter coverage: {coverage_stats['conceded_coverage']['conceded_param_coverage']}%")
+    print(f"\nConceded Games (among those with parameter):")
+    print(f"Games conceded: {games_conceded}")
+    print(f"Games not conceded: {games_not_conceded}")
+    if games_with_conceded_param > 0:
+        conceded_rate = round((games_conceded / games_with_conceded_param) * 100, 2)
+        print(f"Conceded rate: {conceded_rate}%")
+    if games_with_starting_hand > 0:
+        print(f"\nGames with starting hand conceded: {games_with_starting_hand_conceded}")
+        print(f"Games with starting hand not conceded: {games_with_starting_hand_not_conceded}")
+        print(f"Conceded percentage (among games with starting hand): {coverage_stats['conceded_coverage']['conceded_percentage_with_starting_hand']}%")
+    
     # Show prelude coverage among games with starting hand data
     if games_with_starting_hand > 0:
         print(f"\nPrelude Coverage (among games with starting hand data):")
         print(f"Games with preludes: {games_with_preludes}")
         print(f"Games without preludes: {games_without_preludes}")
         print(f"Prelude coverage: {coverage_stats['prelude_coverage']['prelude_percentage']}%")
-    
-    # Show some examples of games with starting hand data
-    if games_with_starting_hand_details:
-        print(f"\nExamples of games with starting hand data:")
-        for i, game_info in enumerate(games_with_starting_hand_details[:5]):  # Show first 5
-            prelude_status = "✓" if game_info['has_preludes'] else "✗"
-            print(f"  {i+1}. Replay {game_info['replay_id']} {prelude_status}: {', '.join(game_info['starting_hand_info'])}")
-        if len(games_with_starting_hand_details) > 5:
-            print(f"  ... and {len(games_with_starting_hand_details) - 5} more")
     
     return coverage_stats
 
